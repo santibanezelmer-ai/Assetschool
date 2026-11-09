@@ -1,4 +1,4 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
+import { Controller, Get, UseGuards, Request } from '@nestjs/common';
 import { AuditService } from './audit.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard } from '../auth/roles.guard';
@@ -12,7 +12,8 @@ export class AuditController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(SystemRole.SUPERADMIN, SystemRole.INSTITUTION_ADMIN, SystemRole.TECH_SUPPORT)
   @Get()
-  async getAuditLogs() {
-    return this.auditService.findAll();
+  async getAuditLogs(@Request() req: any) {
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.auditService.findAll(institutionId);
   }
 }

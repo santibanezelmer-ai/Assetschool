@@ -13,17 +13,20 @@ export class DevicesController {
   @UseGuards(JwtAuthGuard)
   @Get()
   async getDevices(
+    @Request() req: any,
     @Query('classroomId') classroomId?: string,
     @Query('includeDemo') includeDemo?: string,
   ) {
     const withDemo = includeDemo !== 'false';
-    return this.devicesService.findAll(classroomId, withDemo);
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.devicesService.findAll(classroomId, withDemo, institutionId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get(':id')
-  async getDevice(@Param('id') id: string) {
-    return this.devicesService.findOne(id);
+  async getDevice(@Param('id') id: string, @Request() req: any) {
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.devicesService.findOne(id, institutionId);
   }
 
   @Post('register')
@@ -40,6 +43,7 @@ export class DevicesController {
     @Body('reason') reason: string,
     @Request() req: any,
   ) {
-    return this.devicesService.revokeDevice(id, reason || 'Revocado por administrador', req.user.email);
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.devicesService.revokeDevice(id, reason || 'Revocado por administrador', req.user?.email, institutionId);
   }
 }

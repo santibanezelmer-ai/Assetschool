@@ -1,0 +1,191 @@
+{
+  "environment": {
+    "version": "PostgreSQL 16.15 on aarch64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.0.13.5), 64-bit",
+    "now": "2026-11-09T20:39:11.442Z"
+  },
+  "schema": {
+    "tables": [
+      "application_inventory",
+      "assessment_results",
+      "assessments",
+      "audit_logs",
+      "classroom_sessions",
+      "classrooms",
+      "commands",
+      "courses",
+      "device_agents",
+      "device_capabilities",
+      "device_sessions",
+      "devices",
+      "files",
+      "institutions",
+      "policies",
+      "questions",
+      "roles",
+      "students",
+      "users"
+    ]
+  },
+  "persistence": [
+    {
+      "name": "PostgreSQL 16 conectado y operativo en 127.0.0.1:5432",
+      "passed": true,
+      "details": "PostgreSQL 16.15 on aarch64-apple-darwin24.6.0, compiled by Apple clang version 17.0.0 (clang-1700.0.13.5), 64-bit"
+    },
+    {
+      "name": "Presencia exacta de las 19 tablas relacionales en public",
+      "passed": true,
+      "details": "Total: 19"
+    },
+    {
+      "name": "Índices creados en base de datos",
+      "passed": true,
+      "details": "Total: 60"
+    },
+    {
+      "name": "Claves foráneas y restricciones relacionales aplicadas",
+      "passed": true,
+      "details": "Total FK: 33"
+    },
+    {
+      "name": "Restricciones de unicidad (UNIQUE) aplicadas",
+      "passed": true,
+      "details": "Total UQ: 11"
+    },
+    {
+      "name": "Persistencia de instituciones (Alpha y Beta)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Persistencia de usuarios con contraseñas cifradas bcrypt",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Persistencia de salas de clases por institución",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Persistencia de dispositivos y capacidades en disco",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Persistencia de registros de auditoría en PostgreSQL",
+      "passed": true,
+      "details": ""
+    }
+  ],
+  "multiTenant": [
+    {
+      "name": "Docente A consulta dispositivos: solo obtiene equipos de Institución A",
+      "passed": true,
+      "details": "Total recibidos: 1"
+    },
+    {
+      "name": "Docente B consulta dispositivos: solo obtiene equipos de Institución B",
+      "passed": true,
+      "details": "Total recibidos: 1"
+    },
+    {
+      "name": "Acceso cruzado denegado: Docente A intenta leer dispositivo de B (404 Not Found)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Aislamiento de mutación: Admin de A no puede revocar dispositivo de B (400 Bad Request)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Aislamiento de salas de clase por institución",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Aislamiento de registros de auditoría por institución",
+      "passed": true,
+      "details": "Total logs Alpha: 3"
+    }
+  ],
+  "security": [
+    {
+      "name": "Servidor NestJS iniciado y conectado a PostgreSQL 16",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Autenticación exitosa y emisión de JWT para Docente Alpha",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Autenticación exitosa y emisión de JWT para Docente Beta",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "RBAC: Docente tiene denegada la creación de salas (403 Forbidden)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "RBAC: Docente tiene denegado el acceso a auditoría (403 Forbidden)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Refresh Token: Renovación exitosa de access token",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Revocación efectiva: Token revocado en BD rechazado con 401",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Rutas protegidas rechazan peticiones sin token (401 Unauthorized)",
+      "passed": true,
+      "details": ""
+    }
+  ],
+  "durability": [
+    {
+      "name": "Servidor NestJS reiniciado exitosamente",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Autenticación exitosa tras reinicio (usuario y hash preservados)",
+      "passed": true,
+      "details": ""
+    },
+    {
+      "name": "Dispositivos y estado institucional persisten tras reinicio del servidor",
+      "passed": true,
+      "details": ""
+    }
+  ],
+  "webrtcRegression": [
+    {
+      "name": "macOS Agent inicia y se conecta a AgentGateway con PostgreSQL real",
+      "passed": true,
+      "details": "Handshake Socket.IO procesado"
+    },
+    {
+      "name": "Permisos de captura ScreenCaptureKit verificados en macOS",
+      "passed": true,
+      "details": "CGPreflightScreenCaptureAccess: true"
+    },
+    {
+      "name": "Detención limpia de agente y liberación de recursos de captura",
+      "passed": true,
+      "details": ""
+    }
+  ],
+  "passed": 30,
+  "failed": 0
+}
