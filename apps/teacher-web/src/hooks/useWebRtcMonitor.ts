@@ -78,7 +78,7 @@ export function useWebRtcMonitor(classroomId?: string) {
   useEffect(() => {
     fetchDevices();
 
-    const serverWsUrl = `http://${window.location.hostname || 'localhost'}:48501`;
+    const serverWsUrl = `http://${window.location.hostname || 'localhost'}:3000`;
     const token = localStorage.getItem('token') || '';
 
     const socket = io(serverWsUrl, {

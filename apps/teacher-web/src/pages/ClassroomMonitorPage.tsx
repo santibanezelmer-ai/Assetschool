@@ -85,7 +85,7 @@ export const ClassroomMonitorPage: React.FC = () => {
             </div>
             <div>
               <span className="text-[11px] font-semibold text-slate-500 dark:text-slate-400 block">
-                Gateway LAN (Puerto 48501)
+                Gateway LAN (Puerto 3000 / 48501)
               </span>
               <span className="text-xs font-bold text-slate-800 dark:text-slate-200">
                 {isConnectedToGateway ? 'Conectado y Enlazado' : 'Reconectando...'}

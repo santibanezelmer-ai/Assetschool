@@ -5,6 +5,8 @@
  * while in unmanaged environments a standard system permission picker is displayed.
  */
 
+declare const chrome: any;
+
 export interface ChromeOsStreamConfig {
   sessionId: string;
   tier: 'thumbnail' | 'individual';

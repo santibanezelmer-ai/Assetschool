@@ -210,6 +210,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     client.join(`institution:${institutionId}`);
 
     this.logger.log(`Docente autenticado en WebSocket: ${decoded.email} (Aula: ${body.classroomId || 'todas'})`);
+    if (typeof client?.emit === 'function') {
+      client.emit('TEACHER_JOIN_SUCCESS', { success: true, userId, institutionId });
+    }
     return { success: true };
   }
 
@@ -305,7 +308,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     this.logger.log(`Handshake exitoso: ${payload.hostname} (${payload.osType}) - Token emitido.`);
 
-    return createEnvelope(
+    const ack = createEnvelope(
       PacketType.SERVER_HELLO_ACK,
       'SERVER',
       'server',
@@ -319,6 +322,10 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         heartbeatIntervalMs: 15000,
       },
     );
+    if (typeof client?.emit === 'function') {
+      client.emit(PacketType.SERVER_HELLO_ACK, ack);
+    }
+    return ack;
   }
 
   @SubscribeMessage(PacketType.HEARTBEAT_PING)
@@ -559,7 +566,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     this.logger.log(`Streaming WebRTC iniciado: Docente ${teacherSession.email} -> Equipo ${deviceId} (Sesión: ${sessionId}, Tier: ${qualityTier})`);
 
-    return createEnvelope(
+    const sessionCreated = createEnvelope(
       PacketType.WEBRTC_SESSION_CREATED,
       'SERVER',
       'server',
@@ -571,6 +578,10 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         startedAt: activeStream.startedAt,
       },
     );
+    if (typeof client?.emit === 'function') {
+      client.emit(PacketType.WEBRTC_SESSION_CREATED, sessionCreated);
+    }
+    return sessionCreated;
   }
 
   @SubscribeMessage(PacketType.SCREEN_CAPTURE_STOP)
