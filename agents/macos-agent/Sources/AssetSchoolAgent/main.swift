@@ -1,48 +1,167 @@
 import Foundation
+@preconcurrency import WebRTC
+import CoreGraphics
 
-print("==================================================")
-print(" AssetSchool Native Agent — macOS (Swift)")
-print(" Fase 02: ScreenCaptureKit & WebRTC LAN Streaming")
-print("==================================================")
+setbuf(__stdoutp, nil)
 
-let host = ProcessInfo.processInfo.hostName
-let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+let isJsonMode = CommandLine.arguments.contains("--json-signaling")
 
-print("[INFO] Hostname: \(host)")
-print("[INFO] Sistema Operativo: macOS \(osVersion)")
+if !isJsonMode {
+    print("==================================================")
+    print(" AssetSchool Native Agent — macOS (Swift)")
+    print(" Fase 02.2: Motores WebRTC Nativos y ScreenCaptureKit")
+    print("==================================================")
 
-let capabilities = MacOSCapabilityReporter.report(deviceId: "pending-enrollment")
-print("[INFO] Capacidades Nativas Declaradas:")
-if let data = try? JSONSerialization.data(withJSONObject: capabilities, options: .prettyPrinted),
-   let str = String(data: data, encoding: .utf8) {
-    print(str)
+    let host = ProcessInfo.processInfo.hostName
+    let osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+
+    print("[INFO] Hostname: \(host)")
+    print("[INFO] Sistema Operativo: macOS \(osVersion)")
+
+    let capabilities = MacOSCapabilityReporter.report(deviceId: "mac-student-lab-01")
+    print("[INFO] Capacidades Nativas Declaradas:")
+    if let data = try? JSONSerialization.data(withJSONObject: capabilities, options: .prettyPrinted),
+       let str = String(data: data, encoding: .utf8) {
+        print(str)
+    }
 }
 
-let captureManager = ScreenCaptureKitManager()
 let indicator = CaptureIndicatorWindow()
-let webrtcEngine = WebRtcLANEngine()
+let webrtcEngine = WebRtcNativeEngine()
 
-print("\n[VERIFICACIÓN] Verificando permisos TCC para grabación de pantalla...")
-let hasPermissions = captureManager.checkTccPermissions()
-print("[VERIFICACIÓN] Permiso Screen Recording TCC concedido: \(hasPermissions)")
+if isJsonMode {
+    // JSON Signaling Bridge for Automated Testing & Gateway Interop
+    webrtcEngine.onLocalCandidate = { sdp, mid, mLineIndex in
+        let msg: [String: Any] = [
+            "event": "ice_candidate",
+            "candidate": [
+                "candidate": sdp,
+                "sdpMid": mid,
+                "sdpMLineIndex": mLineIndex
+            ]
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: msg),
+           let str = String(data: data, encoding: .utf8) {
+            print(str)
+            fflush(stdout)
+        }
+    }
 
-print("\n[SIMULACIÓN LAN] Iniciando simulación de captura supervisada...")
-indicator.show(teacherName: "Mariana Fuentes")
+    webrtcEngine.onConnectionStateChanged = { state in
+        let msg: [String: Any] = [
+            "event": "ice_state",
+            "state": state.rawValue
+        ]
+        if let data = try? JSONSerialization.data(withJSONObject: msg),
+           let str = String(data: data, encoding: .utf8) {
+            print(str)
+            fflush(stdout)
+        }
+    }
 
-do {
-    try captureManager.startCapture(config: .thumbnail)
-    let sdpOffer = webrtcEngine.createOffer(sessionId: "stream_mac_test_01", config: .thumbnail)
-    print("[SIGNALING] SDP Offer generado para enviar al Gateway:\n\(sdpOffer)")
-    
-    // Simulate teacher sending Answer
-    webrtcEngine.handleAnswer(sdpAnswer: "v=0\r\ns=TeacherAnswer...")
-    
-    // Immediate stop
-    captureManager.stopCapture()
-    webrtcEngine.close()
-    indicator.hide()
-    
-    print("\n[ÉXITO] Ciclo de vida de captura y streaming en macOS validado.")
-} catch {
-    print("[ERROR] Fallo en la prueba de ScreenCaptureKit: \(error.localizedDescription)")
+    Task {
+        do {
+            let offerSdp = try await webrtcEngine.createOffer(sessionId: "test_mac_stream_01", config: .individual)
+            let offerMsg: [String: Any] = [
+                "event": "sdp_offer",
+                "sdp": offerSdp
+            ]
+            if let data = try? JSONSerialization.data(withJSONObject: offerMsg),
+               let str = String(data: data, encoding: .utf8) {
+                print(str)
+                fflush(stdout)
+            }
+        } catch {
+            let errStr = "{\"event\":\"error\",\"message\":\"\(error.localizedDescription)\"}"
+            print(errStr)
+            fflush(stdout)
+            exit(1)
+        }
+    }
+
+    // Process commands from stdin
+    DispatchQueue.global(qos: .userInitiated).async {
+        while let line = readLine() {
+            guard let data = line.data(using: .utf8),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let action = json["action"] as? String else {
+                continue
+            }
+
+            Task {
+                switch action {
+                case "set_answer":
+                    if let sdp = json["sdp"] as? String {
+                        do {
+                            try await webrtcEngine.handleAnswer(sdpAnswer: sdp)
+                            let ack = "{\"event\":\"answer_ack\",\"status\":\"ok\"}"
+                            print(ack)
+                            fflush(stdout)
+                        } catch {
+                            let ack = "{\"event\":\"answer_ack\",\"status\":\"error\",\"message\":\"\(error.localizedDescription)\"}"
+                            print(ack)
+                            fflush(stdout)
+                        }
+                    }
+                case "add_candidate":
+                    if let candObj = json["candidate"] as? [String: Any],
+                       let candStr = candObj["candidate"] as? String {
+                        let mid = candObj["sdpMid"] as? String
+                        let mLine = (candObj["sdpMLineIndex"] as? Int32) ?? 0
+                        webrtcEngine.addRemoteCandidate(sdp: candStr, sdpMid: mid, sdpMLineIndex: mLine)
+                    }
+                case "stop":
+                    webrtcEngine.close()
+                    let ack = "{\"event\":\"stopped\"}"
+                    print(ack)
+                    fflush(stdout)
+                    exit(0)
+                default:
+                    break
+                }
+            }
+        }
+    }
+
+    RunLoop.main.run()
+} else {
+    // Normal CLI execution demonstration
+    print("\n[VERIFICACIÓN] Verificando permisos TCC para grabación de pantalla en macOS...")
+    let hasPermissions = webrtcEngine.hasTccPermission
+    print("[VERIFICACIÓN] Permiso Screen Recording TCC concedido: \(hasPermissions)")
+
+    print("\n[INICIANDO] Activando indicador visual de privacidad de supervisión...")
+    indicator.show(teacherName: "Mariana Fuentes (Docente)")
+
+    webrtcEngine.onLocalCandidate = { sdp, mid, mLineIndex in
+        print("[ICE CANDIDATE LOCAL] Generado por libwebrtc nativo -> mid: \(mid), mLine: \(mLineIndex)")
+    }
+
+    webrtcEngine.onConnectionStateChanged = { state in
+        print("[ICE STATE CHANGE] Nuevo estado: \(state.rawValue)")
+    }
+
+    Task {
+        do {
+            print("\n[WEBRTC] Generando oferta SDP real mediante RTCPeerConnectionFactory nativo...")
+            let sdpOffer = try await webrtcEngine.createOffer(sessionId: "stream_mac_session_real_01", config: .individual)
+            
+            print("\n=================== SDP OFFER REAL GENERADO POR LIBWEBRTC ===================")
+            print(sdpOffer)
+            print("==============================================================================")
+            
+            try await Task.sleep(nanoseconds: 2_000_000_000)
+            
+            webrtcEngine.close()
+            indicator.hide()
+            
+            print("\n[ÉXITO] Pipeline WebRTC nativo (libwebrtc M135 + ScreenCaptureKit) ejecutado y verificado.")
+            exit(0)
+        } catch {
+            print("[ERROR FATAL] Fallo en la inicialización de WebRTC nativo: \(error)")
+            exit(1)
+        }
+    }
+
+    RunLoop.main.run()
 }

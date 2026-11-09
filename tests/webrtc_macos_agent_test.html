@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>AssetSchool macOS Native Agent WebRTC Reception Test</title>
+  <style>
+    body { font-family: sans-serif; background: #0f172a; color: #f8fafc; padding: 20px; }
+    video { border: 2px solid #3b82f6; border-radius: 8px; width: 640px; height: 360px; background: #000; }
+  </style>
+</head>
+<body>
+  <h2>AssetSchool — Validación de Streaming Nativo WebRTC (macOS Agent)</h2>
+  <video id="remoteVideo" autoplay playsinline muted></video>
+  <div id="status">Esperando señalización...</div>
+
+  <script>
+    let pc = null;
+    let statsInterval = null;
+
+    window.initializePeerConnection = async function(offerSdp) {
+      console.log('[CHROME TEST] Inicializando RTCPeerConnection con SDP Offer del agente nativo...');
+      document.getElementById('status').innerText = 'Negociando WebRTC...';
+
+      pc = new RTCPeerConnection({
+        iceServers: [] // LAN-First: Direct host candidates
+      });
+
+      pc.ontrack = (event) => {
+        console.log('[CHROME TEST] Track recibido desde libwebrtc:', event.track.kind, event.track.id);
+        const video = document.getElementById('remoteVideo');
+        video.srcObject = event.streams[0];
+        document.getElementById('status').innerText = 'Video recibido. Decodificando...';
+      };
+
+      pc.onicecandidate = (event) => {
+        if (event.candidate) {
+          console.log('[CHROME TEST] Candidato ICE de Chrome:', event.candidate.candidate);
+          if (window.onChromeCandidateReady) {
+            window.onChromeCandidateReady(JSON.stringify({
+              candidate: event.candidate.candidate,
+              sdpMid: event.candidate.sdpMid,
+              sdpMLineIndex: event.candidate.sdpMLineIndex
+            }));
+          }
+        }
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        console.log('[CHROME TEST] ICE Connection State:', pc.iceConnectionState);
+        document.getElementById('status').innerText = 'ICE State: ' + pc.iceConnectionState;
+        if (pc.iceConnectionState === 'connected' || pc.iceConnectionState === 'completed') {
+          console.log('[CHROME TEST] Enlace WebRTC conectado exitosamente.');
+          startStatsPolling();
+        }
+      };
+
+      await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: offerSdp }));
+      console.log('[CHROME TEST] Remote Description establecida. Creando Answer...');
+      
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+      console.log('[CHROME TEST] Local Answer creada y establecida.');
+
+      return answer.sdp;
+    };
+
+    window.addRemoteCandidate = async function(candidateJson) {
+      if (!pc) return;
+      try {
+        const parsed = JSON.parse(candidateJson);
+        await pc.addIceCandidate(new RTCIceCandidate(parsed));
+        console.log('[CHROME TEST] Candidato remoto de libwebrtc añadido.');
+      } catch (e) {
+        console.error('[CHROME TEST ERROR] Error añadiendo candidato remoto:', e);
+      }
+    };
+
+    function startStatsPolling() {
+      if (statsInterval) return;
+      statsInterval = setInterval(async () => {
+        if (!pc) return;
+        const stats = await pc.getStats();
+        stats.forEach((report) => {
+          if (report.type === 'inbound-rtp' && report.kind === 'video') {
+            console.log(`[WEBRTC STATS] framesDecoded: ${report.framesDecoded}, bytesReceived: ${report.bytesReceived}, keyFrames: ${report.keyFramesDecoded || 0}`);
+            if (report.framesDecoded > 0) {
+              console.log('>>> TEST RESULT: PASSED - NATIVE WEBRTC FRAMES DECODED BY CHROME <<<');
+              clearInterval(statsInterval);
+              statsInterval = null;
+            }
+          }
+        });
+      }, 500);
+    }
+  </script>
+</body>
+</html>

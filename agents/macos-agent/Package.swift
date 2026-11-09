@@ -9,11 +9,15 @@ let package = Package(
     products: [
         .executable(name: "AssetSchoolAgent", targets: ["AssetSchoolAgent"])
     ],
-    dependencies: [],
+    dependencies: [
+        .package(url: "https://github.com/stasel/WebRTC.git", exact: "135.0.0")
+    ],
     targets: [
         .executableTarget(
             name: "AssetSchoolAgent",
-            dependencies: [],
+            dependencies: [
+                .product(name: "WebRTC", package: "WebRTC")
+            ],
             path: "Sources/AssetSchoolAgent"
         )
     ]
