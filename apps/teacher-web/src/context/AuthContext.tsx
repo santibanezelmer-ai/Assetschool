@@ -8,6 +8,7 @@ export interface AuthUser {
   lastName: string;
   role: SystemRole;
   institutionId: string;
+  mustChangePassword?: boolean;
 }
 
 interface AuthContextType {

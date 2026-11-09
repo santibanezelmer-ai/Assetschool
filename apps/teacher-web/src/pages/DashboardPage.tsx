@@ -192,10 +192,11 @@ export const DashboardPage: React.FC = () => {
           </button>
           <button
             onClick={() => handleQuickCommand('BROADCAST')}
-            className="flex items-center gap-2 px-3 py-2 text-xs font-semibold rounded-lg bg-sky-600 hover:bg-sky-700 text-white shadow-sm transition-colors"
+            className="flex items-center gap-1.5 px-3 py-2 text-xs font-semibold rounded-lg bg-sky-600/90 hover:bg-sky-700 text-white shadow-sm transition-colors"
           >
             <Tv className="w-3.5 h-3.5" />
-            Transmitir Pantalla
+            <span>Transmitir Pantalla</span>
+            <span className="text-[9px] font-bold bg-white/20 px-1.5 py-0.2 rounded">FASE 02</span>
           </button>
         </div>
       </div>

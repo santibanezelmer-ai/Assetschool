@@ -69,8 +69,12 @@ export const ClassroomControlPage: React.FC = () => {
               onClick={() => triggerAction('Transmisión de pantalla de profesor')}
               className="w-full flex items-center justify-between px-3 py-2.5 rounded-lg bg-sky-50 hover:bg-sky-100 dark:bg-sky-950/40 dark:hover:bg-sky-900/60 text-sky-700 dark:text-sky-300 text-xs font-semibold transition-colors"
             >
-              <span className="flex items-center gap-2"><Tv className="w-4 h-4" /> Transmitir a Todos</span>
-              <span className="text-[10px] font-mono bg-sky-200 dark:bg-sky-900 px-1.5 py-0.5 rounded">WEBRTC</span>
+              <span className="flex items-center gap-2">
+                <Tv className="w-4 h-4" /> Transmitir a Todos
+              </span>
+              <span className="text-[10px] font-mono bg-sky-200 dark:bg-sky-900 px-1.5 py-0.5 rounded">
+                FASE 02 PENDIENTE
+              </span>
             </button>
             <button
               onClick={() => triggerAction('Silenciado global de sonido')}

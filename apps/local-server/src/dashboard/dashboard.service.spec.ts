@@ -1,22 +1,22 @@
-import { Test, TestingModule } from '@nestjs/testing';
 import { DashboardService } from './dashboard.service';
 import { DatabaseService } from '../database/database.service';
 
-describe('DashboardService', () => {
+describe('DashboardService Metrics & LAN Telemetry Tests', () => {
   let dashboardService: DashboardService;
   let dbService: DatabaseService;
 
   beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      providers: [DashboardService, DatabaseService],
-    }).compile();
-
-    dashboardService = module.get<DashboardService>(DashboardService);
-    dbService = module.get<DatabaseService>(DatabaseService);
+    process.env.DATABASE_MODE = 'memory_test_only';
+    dbService = new DatabaseService();
     await dbService.onModuleInit();
+    dashboardService = new DashboardService(dbService);
   });
 
-  it('should return valid dashboard stats with LAN and Server health metrics', async () => {
+  afterEach(async () => {
+    await dbService.onModuleDestroy();
+  });
+
+  it('should return valid dashboard stats with LAN and Server health metrics from database', async () => {
     const stats = await dashboardService.getStats();
 
     expect(stats).toBeDefined();

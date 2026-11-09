@@ -12,6 +12,25 @@ export const LoginRequestSchema = z.object({
 
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
+export const ChangePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required'),
+  newPassword: z
+    .string()
+    .min(8, 'New password must be at least 8 characters')
+    .regex(/[A-Z]/, 'Must contain at least one uppercase letter')
+    .regex(/[a-z]/, 'Must contain at least one lowercase letter')
+    .regex(/[0-9]/, 'Must contain at least one digit')
+    .regex(/[^A-Za-z0-9]/, 'Must contain at least one special character'),
+});
+
+export type ChangePasswordRequest = z.infer<typeof ChangePasswordSchema>;
+
+export const RefreshTokenSchema = z.object({
+  refreshToken: z.string().min(1, 'Refresh token is required'),
+});
+
+export type RefreshTokenRequest = z.infer<typeof RefreshTokenSchema>;
+
 export const RegisterUserSchema = z.object({
   institutionId: z.string().uuid(),
   email: z.string().email(),

@@ -17,10 +17,10 @@ INSERT INTO institutions (id, code, name, description, address, contact_email, s
 ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', 'CPC-01', 'Instituto Politécnico Central', 'Campus Principal - Red Educativa Local', 'Av. Tecnológica 1024, Edificio Norte', 'tic@politecnicocentral.edu', '{"lanSubnet": "192.168.1.0/24", "allowUsbDefault": false, "screenPrivacyNotice": true}'::jsonb)
 ON CONFLICT (code) DO NOTHING;
 
--- 3. SEED USERS (Password hashed: "Admin123!*" -> bcrypt $2b$10$wTqK/8vC0Vb5lZcQW3d26Op03wY8C6Kx.o8b/f5s8Ie1K/R.3t846)
-INSERT INTO users (id, institution_id, role_id, email, password_hash, first_name, last_name, is_active) VALUES
-('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'admin@assetschool.lan', '$2b$10$iI8Y0y0/w79oUu0n9K1K6eS43u6R9.tJ8f5mGzK2T4l6O5h7U4r2q', 'Carlos', 'Valenzuela', true),
-('cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'profesor@assetschool.lan', '$2b$10$iI8Y0y0/w79oUu0n9K1K6eS43u6R9.tJ8f5mGzK2T4l6O5h7U4r2q', 'Mariana', 'Fuentes', true)
+-- 3. SEED USERS (Valid bcrypt hashes for initial passwords with must_change_password = true)
+INSERT INTO users (id, institution_id, role_id, email, password_hash, first_name, last_name, is_active, must_change_password) VALUES
+('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '22222222-2222-2222-2222-222222222222', 'admin@assetschool.lan', '$2b$10$.fyJaKBJrON6JNQ5JnamG.EuddQ2OGNNkKUm/s7UjHNCMvMtOEPei', 'Carlos', 'Valenzuela', true, true),
+('cccccccc-cccc-cccc-cccc-cccccccccccc', 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', '33333333-3333-3333-3333-333333333333', 'profesor@assetschool.lan', '$2b$10$43z8ye.cycfu6W5O2Nbw0OlSv2Yw/W5WwajPCyvjBLMO/wwoJMuWa', 'Mariana', 'Fuentes', true, true)
 ON CONFLICT (institution_id, email) DO NOTHING;
 
 -- 4. SEED CLASSROOMS

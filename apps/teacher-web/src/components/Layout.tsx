@@ -2,10 +2,20 @@ import React, { useEffect, useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
 import { Header } from './Header';
+import { ChangePasswordModal } from './ChangePasswordModal';
+import { useAuth } from '../context/AuthContext';
 import { DashboardStats } from '@assetschool/shared-types';
 
 export const Layout: React.FC = () => {
+  const { user } = useAuth();
   const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+
+  useEffect(() => {
+    if (user?.mustChangePassword) {
+      setShowPasswordModal(true);
+    }
+  }, [user]);
 
   useEffect(() => {
     fetch('/api/v1/dashboard/stats')
@@ -26,7 +36,7 @@ export const Layout: React.FC = () => {
             status: 'online',
             uptimeSeconds: 120,
             memoryUsageMb: 85,
-            version: '1.0.0-phase1',
+            version: '1.0.0-phase1.1',
             nodeVersion: 'v24.22.0',
           },
           lanStatus: {
@@ -56,6 +66,16 @@ export const Layout: React.FC = () => {
           <Outlet context={{ stats }} />
         </main>
       </div>
+
+      <ChangePasswordModal
+        isOpen={showPasswordModal}
+        onSuccess={() => {
+          setShowPasswordModal(false);
+          if (user) {
+            user.mustChangePassword = false;
+          }
+        }}
+      />
     </div>
   );
 };

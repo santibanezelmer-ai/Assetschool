@@ -91,6 +91,7 @@ export interface User {
   lastName: string;
   role: SystemRole;
   isActive: boolean;
+  mustChangePassword?: boolean;
   lastLoginAt?: string;
   createdAt: string;
   updatedAt: string;

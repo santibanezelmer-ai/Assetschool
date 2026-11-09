@@ -6,9 +6,27 @@ async function bootstrap() {
   const logger = new Logger('AssetSchoolCore');
   const app = await NestFactory.create(AppModule);
 
-  // Enable CORS for local teacher and admin web applications
+  // Security: Configurable CORS policy for local LAN
+  const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS
+    ? process.env.CORS_ALLOWED_ORIGINS.split(',').map((o) => o.trim())
+    : ['http://localhost:5173', 'http://127.0.0.1:5173', 'http://localhost:3000'];
+
   app.enableCors({
-    origin: '*',
+    origin: (origin, callback) => {
+      // Allow requests with no origin (like mobile apps, curl, desktop agents)
+      if (!origin) return callback(null, true);
+      // In development / local LAN, accept local networks and configured origins
+      const isLocalLan =
+        /^http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$/.test(
+          origin,
+        );
+      if (allowedOrigins.includes(origin) || isLocalLan) {
+        callback(null, true);
+      } else {
+        logger.warn(`Petición bloqueada por CORS: origen '${origin}' no autorizado`);
+        callback(new Error('Bloqueado por política CORS institucional'));
+      }
+    },
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
@@ -17,10 +35,10 @@ async function bootstrap() {
   await app.listen(port);
 
   logger.log(`================================================================`);
-  logger.log(`  AssetSchool Local Server — Core Engine (Phase 01)`);
+  logger.log(`  AssetSchool Local Server — Core Engine (Phase 01.1 Audited)`);
   logger.log(`  REST API listening on: http://localhost:${port}/api/v1`);
   logger.log(`  Agent WebSocket Gateway active on port: ${port}`);
-  logger.log(`  Local LAN Discovery: Active`);
+  logger.log(`  Local LAN Discovery: Active (UDP 48500 / TCP 48501)`);
   logger.log(`================================================================`);
 }
 
