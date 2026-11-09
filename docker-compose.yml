@@ -1,0 +1,68 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: assetschool-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: assetschool_db
+      POSTGRES_USER: assetschool_admin
+      POSTGRES_PASSWORD: assetschool_secure_pass_2026
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/postgres/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assetschool_admin -d assetschool_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - assetschool-lan
+
+  local-server:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.server
+    container_name: assetschool-local-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: 3000
+      NODE_ENV: production
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_USER: assetschool_admin
+      DATABASE_PASSWORD: assetschool_secure_pass_2026
+      DATABASE_NAME: assetschool_db
+      JWT_SECRET: assetschool_jwt_super_secret_local_lan_token_phase1_2026
+      LAN_DISCOVERY_PORT: 48500
+      AGENT_WS_PORT: 48501
+    ports:
+      - "3000:3000"
+      - "48500:48500/udp"
+      - "48501:48501"
+    networks:
+      - assetschool-lan
+
+  teacher-web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile.web
+    container_name: assetschool-teacher-web
+    restart: unless-stopped
+    depends_on:
+      - local-server
+    ports:
+      - "5173:80"
+    networks:
+      - assetschool-lan
+
+networks:
+  assetschool-lan:
+    driver: bridge
+
+volumes:
+  postgres_data:

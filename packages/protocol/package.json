@@ -1,0 +1,26 @@
+{
+  "name": "@assetschool/protocol",
+  "version": "0.1.0",
+  "description": "Cryptographic network protocol contracts between AssetSchool server and native agents",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@assetschool/shared-types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

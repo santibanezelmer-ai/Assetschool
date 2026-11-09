@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "AssetSchool ChromeOS Student Agent",
+  "version": "1.0.0",
+  "description": "Agente oficial administrado de AssetSchool para ChromeOS",
+  "permissions": [
+    "enterprise.deviceAttributes",
+    "tabs",
+    "declarativeNetRequest",
+    "notifications",
+    "storage",
+    "webNavigation"
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
+  "icons": {
+    "128": "icons/icon128.png"
+  }
+}
