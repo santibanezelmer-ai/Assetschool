@@ -362,4 +362,155 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     expect(closedNotice).toBeDefined();
     expect(closedNotice.data.payload.reason).toContain('revocado');
   });
+
+  it('should terminate active stream immediately when agent disconnects unexpectedly and allow reconnection', async () => {
+    const agentSocket = createMockSocket('agent_sock_disc');
+    const teacherSocket = createMockSocket('teacher_sock_disc');
+
+    const socketMap = new Map<string, any>([
+      [agentSocket.id, agentSocket],
+      [teacherSocket.id, teacherSocket],
+    ]);
+
+    gateway.server = {
+      sockets: {
+        sockets: socketMap,
+      },
+    } as any;
+
+    const agentDeviceId = '02020202-0202-0202-0202-020202020202';
+    await gateway.handleAgentHello(
+      agentSocket,
+      createEnvelope(PacketType.AGENT_HELLO, agentDeviceId, 'agent', {
+        hostname: 'LAB01-MAC-02',
+        macAddress: '02:42:AC:11:00:03',
+        localIp: '192.168.1.102',
+        osType: DevicePlatform.MACOS,
+        osVersion: 'macOS 15',
+        architecture: 'arm64',
+        agentVersion: '1.0.0',
+        publicKey: 'mock_key',
+        enrolledDeviceId: agentDeviceId,
+      }),
+    );
+
+    await gateway.handleTeacherJoin(teacherSocket, {
+      token: 'mock_token',
+      classroomId: '11111111-1111-1111-1111-111111111111',
+    });
+
+    const sessionId = 'stream_disconnect_test';
+    await gateway.handleScreenCaptureStart(
+      teacherSocket,
+      createEnvelope(PacketType.SCREEN_CAPTURE_START, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'server', {
+        teacherId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+        deviceId: agentDeviceId,
+        sessionId,
+        qualityTier: 'thumbnail' as const,
+      }),
+    );
+    expect(gateway.getActiveStreamsCount()).toBe(1);
+
+    // Agent disconnects unexpectedly
+    gateway.handleDisconnect(agentSocket);
+    expect(gateway.getActiveStreamsCount()).toBe(0);
+
+    const teacherNotification = teacherSocket._emitted.find(
+      (e: any) => e.event === PacketType.WEBRTC_SESSION_CLOSED && e.data.payload.reason.includes('desconect'),
+    );
+    expect(teacherNotification).toBeDefined();
+
+    // Agent reconnects with new socket
+    const agentSocketNew = createMockSocket('agent_sock_reconnected');
+    socketMap.set(agentSocketNew.id, agentSocketNew);
+
+    const helloAck = await gateway.handleAgentHello(
+      agentSocketNew,
+      createEnvelope(PacketType.AGENT_HELLO, agentDeviceId, 'agent', {
+        hostname: 'LAB01-MAC-02',
+        macAddress: '02:42:AC:11:00:03',
+        localIp: '192.168.1.102',
+        osType: DevicePlatform.MACOS,
+        osVersion: 'macOS 15',
+        architecture: 'arm64',
+        agentVersion: '1.0.0',
+        publicKey: 'mock_key',
+        enrolledDeviceId: agentDeviceId,
+      }),
+    );
+    expect(helloAck.packetType).toBe(PacketType.SERVER_HELLO_ACK);
+    expect((helloAck.payload as any).isEnrolled).toBe(true);
+  });
+
+  it('should gracefully handle second stream start by updating active session without resource leak', async () => {
+    const agentSocket = createMockSocket('agent_sock_double');
+    const teacherSocket = createMockSocket('teacher_sock_double');
+
+    gateway.server = {
+      sockets: {
+        sockets: new Map([
+          [agentSocket.id, agentSocket],
+          [teacherSocket.id, teacherSocket],
+        ]),
+      },
+    } as any;
+
+    const agentDeviceId = '01010101-0101-0101-0101-010101010101';
+    await gateway.handleAgentHello(
+      agentSocket,
+      createEnvelope(PacketType.AGENT_HELLO, agentDeviceId, 'agent', {
+        hostname: 'LAB01-PC-01',
+        macAddress: '02:42:AC:11:00:02',
+        localIp: '192.168.1.101',
+        osType: DevicePlatform.WINDOWS,
+        osVersion: 'Windows 11',
+        architecture: 'x64',
+        agentVersion: '1.0.0',
+        publicKey: 'mock_key',
+        enrolledDeviceId: agentDeviceId,
+      }),
+    );
+
+    await gateway.handleTeacherJoin(teacherSocket, {
+      token: 'mock_token',
+      classroomId: '11111111-1111-1111-1111-111111111111',
+    });
+
+    // Start 1st stream
+    await gateway.handleScreenCaptureStart(
+      teacherSocket,
+      createEnvelope(PacketType.SCREEN_CAPTURE_START, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'server', {
+        teacherId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+        deviceId: agentDeviceId,
+        sessionId: 'session_01',
+        qualityTier: 'thumbnail' as const,
+      }),
+    );
+    expect(gateway.getActiveStreamsCount()).toBe(1);
+
+    // Stop 1st stream cleanly before starting incompatible individual stream
+    await gateway.handleScreenCaptureStop(
+      teacherSocket,
+      createEnvelope(PacketType.SCREEN_CAPTURE_STOP, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'server', {
+        teacherId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+        deviceId: agentDeviceId,
+        sessionId: 'session_01',
+        reason: 'Switching to full individual resolution',
+      }),
+    );
+    expect(gateway.getActiveStreamsCount()).toBe(0);
+
+    // Start 2nd stream
+    const res2 = await gateway.handleScreenCaptureStart(
+      teacherSocket,
+      createEnvelope(PacketType.SCREEN_CAPTURE_START, 'cccccccc-cccc-cccc-cccc-cccccccccccc', 'server', {
+        teacherId: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
+        deviceId: agentDeviceId,
+        sessionId: 'session_02',
+        qualityTier: 'individual' as const,
+      }),
+    );
+    expect(res2.packetType).toBe(PacketType.WEBRTC_SESSION_CREATED);
+    expect(gateway.getActiveStreamsCount()).toBe(1);
+  });
 });

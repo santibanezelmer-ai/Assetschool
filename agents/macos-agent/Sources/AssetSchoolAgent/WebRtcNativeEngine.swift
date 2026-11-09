@@ -121,6 +121,11 @@ public class WebRtcNativeEngine: NSObject, RTCPeerConnectionDelegate, SCStreamOu
             throw NSError(domain: "WebRTC", code: -1, userInfo: [NSLocalizedDescriptionKey: "PeerConnection no inicializada"])
         }
         
+        if pc.signalingState != .haveLocalOffer {
+            print("[WEBRTC NATIVO] Remote SDP Answer duplicada ignorada (Signaling state actual: \(pc.signalingState.rawValue)).")
+            return
+        }
+        
         let sessionDesc = RTCSessionDescription(type: .answer, sdp: sdpAnswer)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             pc.setRemoteDescription(sessionDesc) { error in

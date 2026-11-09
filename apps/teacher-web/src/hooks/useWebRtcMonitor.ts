@@ -45,8 +45,8 @@ export function useWebRtcMonitor(classroomId?: string) {
   // 1. Fetch devices enrolled in classroom
   const fetchDevices = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const res = await fetch(`http://localhost:3000/api/devices${classroomId ? `?classroom_id=${classroomId}` : ''}`, {
+      const token = localStorage.getItem('token') || localStorage.getItem('assetschool_token');
+      const res = await fetch(`http://localhost:3000/api/v1/devices${classroomId ? `?classroom_id=${classroomId}` : ''}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (res.ok) {
@@ -79,7 +79,7 @@ export function useWebRtcMonitor(classroomId?: string) {
     fetchDevices();
 
     const serverWsUrl = `http://${window.location.hostname || 'localhost'}:3000`;
-    const token = localStorage.getItem('token') || '';
+    const token = localStorage.getItem('token') || localStorage.getItem('assetschool_token') || '';
 
     const socket = io(serverWsUrl, {
       transports: ['websocket', 'polling'],
@@ -96,7 +96,7 @@ export function useWebRtcMonitor(classroomId?: string) {
       // Authenticate as Teacher
       socket.emit('TEACHER_JOIN_CLASSROOM', {
         token,
-        classroomId: classroomId || '11111111-1111-1111-1111-111111111111',
+        classroomId: classroomId || 'd1111111-1111-1111-1111-111111111111',
       });
     });
 
@@ -422,6 +422,19 @@ export function useWebRtcMonitor(classroomId?: string) {
       stopStream(deviceId);
     });
   }, [streams, stopStream]);
+
+  if (typeof window !== 'undefined') {
+    (window as any).__assetschool_monitor = {
+      devices,
+      streams,
+      isConnectedToGateway,
+      startStream,
+      stopStream,
+      startAllStreams,
+      stopAllStreams,
+      getPeerConnection: (id: string) => peerConnectionsRef.current.get(id),
+    };
+  }
 
   return {
     devices,

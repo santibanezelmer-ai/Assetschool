@@ -5,11 +5,12 @@ import CoreGraphics
 setbuf(__stdoutp, nil)
 
 let isJsonMode = CommandLine.arguments.contains("--json-signaling")
+let isGatewayMode = CommandLine.arguments.contains("--gateway-mode") || (!isJsonMode && CommandLine.arguments.contains("--connect"))
 
 if !isJsonMode {
     print("==================================================")
     print(" AssetSchool Native Agent — macOS (Swift)")
-    print(" Fase 02.2: Motores WebRTC Nativos y ScreenCaptureKit")
+    print(" Fase 02.3: Validación End-to-End y Streaming Continuo")
     print("==================================================")
 
     let host = ProcessInfo.processInfo.hostName
@@ -18,7 +19,7 @@ if !isJsonMode {
     print("[INFO] Hostname: \(host)")
     print("[INFO] Sistema Operativo: macOS \(osVersion)")
 
-    let capabilities = MacOSCapabilityReporter.report(deviceId: "mac-student-lab-01")
+    let capabilities = MacOSCapabilityReporter.report(deviceId: "02020202-0202-0202-0202-020202020202")
     print("[INFO] Capacidades Nativas Declaradas:")
     if let data = try? JSONSerialization.data(withJSONObject: capabilities, options: .prettyPrinted),
        let str = String(data: data, encoding: .utf8) {
@@ -29,8 +30,31 @@ if !isJsonMode {
 let indicator = CaptureIndicatorWindow()
 let webrtcEngine = WebRtcNativeEngine()
 
-if isJsonMode {
-    // JSON Signaling Bridge for Automated Testing & Gateway Interop
+if isGatewayMode {
+    print("\n[MODO GATEWAY] Conectando a infraestructura central de AssetSchool...")
+    print("[VERIFICACIÓN TCC] Permiso de captura de pantalla concedido: \(webrtcEngine.hasTccPermission)")
+    
+    let gatewayUrl = URL(string: "ws://127.0.0.1:3000/socket.io/?EIO=4&transport=websocket")!
+    let gatewayClient = GatewayClient(
+        gatewayUrl: gatewayUrl,
+        deviceId: "02020202-0202-0202-0202-020202020202",
+        macAddress: "02:42:AC:11:00:03",
+        hostname: "LAB01-MAC-02",
+        webrtcEngine: webrtcEngine
+    )
+    
+    gatewayClient.onStreamStarted = {
+        indicator.show(teacherName: "Mariana Fuentes (Docente)")
+    }
+    
+    gatewayClient.onStreamStopped = {
+        indicator.hide()
+    }
+    
+    gatewayClient.connect()
+    RunLoop.main.run()
+} else if isJsonMode {
+    // JSON Signaling Bridge for Automated Testing & Harness
     webrtcEngine.onLocalCandidate = { sdp, mid, mLineIndex in
         let msg: [String: Any] = [
             "event": "ice_candidate",
