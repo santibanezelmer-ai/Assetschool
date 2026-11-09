@@ -1,0 +1,52 @@
+[
+  {
+    "deviceCount": 1,
+    "serverCpuPercent": 8.4,
+    "serverMemoryMb": 80.2,
+    "avgSignalingLatencyMs": 1,
+    "estimatedLanBandwidthMbps": "0.25",
+    "negotiationErrors": 0,
+    "errorRatePercent": "0.0",
+    "status": "ESTABLE"
+  },
+  {
+    "deviceCount": 5,
+    "serverCpuPercent": 0,
+    "serverMemoryMb": 76,
+    "avgSignalingLatencyMs": 1,
+    "estimatedLanBandwidthMbps": "1.25",
+    "negotiationErrors": 0,
+    "errorRatePercent": "0.0",
+    "status": "ESTABLE"
+  },
+  {
+    "deviceCount": 10,
+    "serverCpuPercent": 0,
+    "serverMemoryMb": 77.5,
+    "avgSignalingLatencyMs": 1,
+    "estimatedLanBandwidthMbps": "2.50",
+    "negotiationErrors": 0,
+    "errorRatePercent": "0.0",
+    "status": "ESTABLE"
+  },
+  {
+    "deviceCount": 20,
+    "serverCpuPercent": 0,
+    "serverMemoryMb": 81.5,
+    "avgSignalingLatencyMs": 1,
+    "estimatedLanBandwidthMbps": "5.00",
+    "negotiationErrors": 0,
+    "errorRatePercent": "0.0",
+    "status": "ESTABLE"
+  },
+  {
+    "deviceCount": 40,
+    "serverCpuPercent": 0,
+    "serverMemoryMb": 87.9,
+    "avgSignalingLatencyMs": 0,
+    "estimatedLanBandwidthMbps": "10.00",
+    "negotiationErrors": 0,
+    "errorRatePercent": "0.0",
+    "status": "ESTABLE"
+  }
+]

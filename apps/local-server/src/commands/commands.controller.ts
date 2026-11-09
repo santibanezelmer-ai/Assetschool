@@ -15,12 +15,14 @@ export class CommandsController {
   @Post('dispatch')
   async dispatch(@Body() body: DispatchCommand, @Request() req: any) {
     const validated = DispatchCommandSchema.parse(body);
-    return this.commandsService.dispatch(validated, req.user.userId, req.user.email);
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.commandsService.dispatch(validated, req.user.userId, req.user.email, institutionId);
   }
 
   @UseGuards(JwtAuthGuard)
   @Get('recent')
-  async getRecent() {
-    return this.commandsService.listRecent();
+  async getRecent(@Request() req: any) {
+    const institutionId = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.commandsService.listRecent(institutionId);
   }
 }
