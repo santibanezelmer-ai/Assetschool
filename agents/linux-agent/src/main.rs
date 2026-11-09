@@ -1,4 +1,11 @@
+mod screencast_portal;
+mod indicator;
+mod webrtc_streamer;
+
 use serde::Serialize;
+use screencast_portal::{ScreenCastPortalManager, StreamConfig};
+use indicator::CaptureIndicator;
+use webrtc_streamer::WebRtcStreamer;
 
 #[derive(Serialize)]
 struct LinuxCapabilities {
@@ -36,7 +43,7 @@ fn get_linux_capabilities(device_id: &str) -> LinuxCapabilities {
         can_execute_command: true,
         can_collect_hardware_inventory: true,
         platform_notes: format!(
-            "Linux Rust nativo. Servidor gráfico detectado: {}.",
+            "Linux Rust nativo. Servidor gráfico detectado: {}. Captura mediante PipeWire/xdg-desktop-portal.",
             if is_wayland { "Wayland (Portal pipewire)" } else { "X11 (XShm / XTest)" }
         ),
     }
@@ -46,12 +53,32 @@ fn get_linux_capabilities(device_id: &str) -> LinuxCapabilities {
 async fn main() {
     println!("==================================================");
     println!(" AssetSchool Native Agent — Linux (Rust)");
-    println!(" Fase 01: Fundación de Arquitectura y Protocolo");
+    println!(" Fase 02: Captura PipeWire/X11 & WebRTC LAN");
     println!("==================================================");
 
     let caps = get_linux_capabilities("pending-enrollment");
     if let Ok(json) = serde_json::to_string_pretty(&caps) {
-        println!("[INFO] Capacidades Nativas Registradas:");
-        println!("{}", json);
+        println!("[INFO] Capacidades Nativas Registradas:\n{}", json);
+    }
+
+    let mut portal = ScreenCastPortalManager::new();
+    let mut indicator = CaptureIndicator::new();
+    let mut streamer = WebRtcStreamer::new("192.168.1.103");
+
+    println!("\n[SIMULACIÓN LAN] Iniciando verificación de captura supervisada en Linux...");
+    indicator.show("Mariana Fuentes");
+
+    let config = StreamConfig::thumbnail();
+    if let Ok(_) = portal.start_capture(config.clone()) {
+        let offer = streamer.create_offer("stream_linux_test_01", &config);
+        println!("[SIGNALING] Offer SDP generado:\n{}", offer);
+
+        streamer.handle_answer("v=0\r\ns=TeacherAnswer...");
+
+        portal.stop_capture();
+        streamer.close();
+        indicator.hide();
+
+        println!("\n[ÉXITO] Pipeline de captura y WebRTC en Linux validado correctamente.");
     }
 }

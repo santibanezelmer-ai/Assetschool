@@ -1,7 +1,10 @@
 /**
  * AssetSchool ChromeOS Agent (Manifest V3 Service Worker)
  * Declara con estricta veracidad lo que ChromeOS permite dentro del Sandbox de Extensiones.
+ * Fase 02: Integración de chrome.desktopCapture autorizada y WebRTC LAN.
  */
+
+import { ChromeOsCaptureManager } from './capture';
 
 export interface ChromeOsCapabilities {
   deviceId: string;
@@ -24,8 +27,8 @@ export function getChromeOsCapabilities(deviceId: string): ChromeOsCapabilities 
   return {
     deviceId,
     osType: 'chromeos',
-    canScreenBroadcast: false, // Chrome Extension no puede capturar la pantalla completa silenciosamente sin prompt del usuario
-    canScreenReceive: true,     // Puede mostrar la pantalla del profesor en una pestaña o ventana fullscreen
+    canScreenBroadcast: true, // Con permiso explícito de usuario o política administrada AutoSelectDesktopCaptureSourceByScreen
+    canScreenReceive: true,
     canRemoteInput: false,      // Imposible en sandbox de Chrome
     canLockInput: false,        // Imposible en sandbox de Chrome
     canBlackoutScreen: false,   // No puede ocultar la barra de sistema de ChromeOS
@@ -35,8 +38,10 @@ export function getChromeOsCapabilities(deviceId: string): ChromeOsCapabilities 
     canChat: true,              // Interfaz web de mensajería para asistencia
     canExecuteCommand: false,   // No hay acceso a shell/crosh
     canCollectHardwareInventory: false,
-    platformNotes: 'ChromeOS Extension MV3. Filtrado URL activo y recepción de transmisiones en navegador.',
+    platformNotes: 'ChromeOS Extension MV3. Captura vía chrome.desktopCapture (requiere pre-autorización o política de dominio).',
   };
 }
 
-console.log('[AssetSchool] Agente ChromeOS inicializado. Capacidades limitadas por seguridad de ChromeOS.');
+const captureManager = new ChromeOsCaptureManager();
+
+console.log('[AssetSchool] Agente ChromeOS inicializado. Soporte de chrome.desktopCapture y WebRTC LAN activo.');

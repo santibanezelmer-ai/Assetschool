@@ -5,6 +5,7 @@
   "description": "Agente oficial administrado de AssetSchool para ChromeOS",
   "permissions": [
     "enterprise.deviceAttributes",
+    "desktopCapture",
     "tabs",
     "declarativeNetRequest",
     "notifications",

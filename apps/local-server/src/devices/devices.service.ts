@@ -3,8 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
   Logger,
+  Optional,
 } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
+import { AgentGateway } from '../gateway/agent.gateway';
 import { AgentRegistration } from '@assetschool/validators';
 import { DeviceStatus } from '@assetschool/shared-types';
 import { randomUUID } from 'crypto';
@@ -13,7 +15,10 @@ import { randomUUID } from 'crypto';
 export class DevicesService {
   private readonly logger = new Logger(DevicesService.name);
 
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional() private readonly gateway?: AgentGateway,
+  ) {}
 
   async findAll(classroomId?: string, includeDemo: boolean = true, institutionId?: string) {
     let sql = `SELECT * FROM devices WHERE 1=1`;
@@ -234,6 +239,11 @@ export class DevicesService {
        WHERE id = $3`,
       [DeviceStatus.OFFLINE, reason, id],
     );
+
+    // Immediately terminate any active WebRTC screen streams if device is revoked
+    if (this.gateway) {
+      this.gateway.terminateDeviceStreams(id, `Dispositivo revocado por ${actorEmail}: ${reason}`);
+    }
 
     await this.databaseService.query(
       `INSERT INTO audit_logs (id, institution_id, action, entity_type, entity_id, details_json, timestamp)

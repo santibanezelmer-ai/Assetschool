@@ -38,6 +38,18 @@ export enum PacketType {
   SIGNAL_SDP_ANSWER = 'SIGNAL_SDP_ANSWER',
   SIGNAL_ICE_CANDIDATE = 'SIGNAL_ICE_CANDIDATE',
 
+  // Screen Capture & WebRTC LAN Streaming (Phase 02 Specifications)
+  SCREEN_CAPTURE_START = 'SCREEN_CAPTURE_START',
+  SCREEN_CAPTURE_STOP = 'SCREEN_CAPTURE_STOP',
+  SCREEN_CAPTURE_STATUS = 'SCREEN_CAPTURE_STATUS',
+  WEBRTC_OFFER = 'WEBRTC_OFFER',
+  WEBRTC_ANSWER = 'WEBRTC_ANSWER',
+  WEBRTC_ICE_CANDIDATE = 'WEBRTC_ICE_CANDIDATE',
+  WEBRTC_SESSION_CREATED = 'WEBRTC_SESSION_CREATED',
+  WEBRTC_SESSION_CLOSED = 'WEBRTC_SESSION_CLOSED',
+  WEBRTC_ERROR = 'WEBRTC_ERROR',
+  SCREEN_STREAM_STATS = 'SCREEN_STREAM_STATS',
+
   // Classroom Session binding
   SESSION_JOIN_NOTICE = 'SESSION_JOIN_NOTICE',
   SESSION_LEAVE_NOTICE = 'SESSION_LEAVE_NOTICE',
@@ -139,6 +151,99 @@ export interface WebRtcSignalPayload {
   type: 'offer' | 'answer' | 'candidate';
   sdp?: string;
   candidate?: Record<string, unknown>;
+}
+
+// Phase 02: Screen Capture & WebRTC LAN Streaming Payloads
+export interface ScreenCaptureStartPayload {
+  teacherId: string;
+  deviceId: string;
+  sessionId: string;
+  qualityTier: 'thumbnail' | 'individual';
+  targetFps?: number;
+  targetBitrateKbps?: number;
+  targetWidth?: number;
+  targetHeight?: number;
+  monitorIndex?: number;
+}
+
+export interface ScreenCaptureStopPayload {
+  teacherId: string;
+  deviceId: string;
+  sessionId: string;
+  reason?: string;
+}
+
+export interface ScreenCaptureStatusPayload {
+  deviceId: string;
+  isCapturing: boolean;
+  activeSessionId?: string;
+  fps: number;
+  width: number;
+  height: number;
+  qualityTier: 'thumbnail' | 'individual';
+  error?: string;
+}
+
+export interface WebRtcOfferPayload {
+  sessionId: string;
+  targetDeviceId: string;
+  teacherId: string;
+  sdp: string;
+  qualityTier?: 'thumbnail' | 'individual';
+}
+
+export interface WebRtcAnswerPayload {
+  sessionId: string;
+  deviceId: string;
+  targetTeacherId: string;
+  sdp: string;
+}
+
+export interface WebRtcIceCandidatePayload {
+  sessionId: string;
+  senderId: string;
+  targetId: string;
+  candidate: {
+    candidate: string;
+    sdpMid?: string | null;
+    sdpMLineIndex?: number | null;
+    usernameFragment?: string | null;
+  };
+}
+
+export interface WebRtcSessionCreatedPayload {
+  sessionId: string;
+  teacherId: string;
+  deviceId: string;
+  qualityTier: 'thumbnail' | 'individual';
+  startedAt: number;
+}
+
+export interface WebRtcSessionClosedPayload {
+  sessionId: string;
+  teacherId: string;
+  deviceId: string;
+  reason: string;
+  closedAt: number;
+}
+
+export interface WebRtcErrorPayload {
+  sessionId?: string;
+  deviceId?: string;
+  teacherId?: string;
+  code: 'PERMISSION_DENIED' | 'UNSUPPORTED_PLATFORM' | 'PEER_CONNECTION_FAILED' | 'REVOKED' | 'UNAUTHORIZED' | 'TIMEOUT' | 'UNKNOWN';
+  message: string;
+}
+
+export interface ScreenStreamStatsPayload {
+  sessionId: string;
+  deviceId: string;
+  fps: number;
+  bitrateKbps: number;
+  packetLossPercent: number;
+  roundTripTimeMs: number;
+  resolution: string;
+  timestamp: number;
 }
 
 export function createEnvelope<T>(

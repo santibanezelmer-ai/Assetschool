@@ -71,6 +71,29 @@ export enum PolicyRuleType {
   SCREEN_PRIVACY = 'screen_privacy',
 }
 
+export type StreamQualityTier = 'thumbnail' | 'individual';
+
+export interface ScreenStreamSession {
+  id: UUID;
+  classroomId: UUID;
+  teacherId: UUID;
+  deviceId: UUID;
+  qualityTier: StreamQualityTier;
+  isActive: boolean;
+  startedAt: string;
+  endedAt?: string;
+}
+
+export interface ScreenStreamStats {
+  deviceId: UUID;
+  fps: number;
+  bitrateKbps: number;
+  packetLossPercent: number;
+  rttMs: number;
+  resolution: string;
+  timestamp: string;
+}
+
 export interface Institution {
   id: UUID;
   code: string;
