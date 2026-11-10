@@ -1,0 +1,110 @@
+{
+  "phase": "02.7",
+  "timestamp": "2026-11-10T01:37:28.344Z",
+  "environment": {
+    "os": "macOS (Darwin)",
+    "arch": "x64",
+    "node": "v24.22.0",
+    "postgres": "16.15 (127.0.0.1:5432)",
+    "discoveryPort": 48500,
+    "gatewayPort": 3000
+  },
+  "tests": {
+    "discoveryBeacon": {
+      "passed": true,
+      "protocolVersion": "1.0.0",
+      "serverId": "srv_macbook_pro_de_macbook_local",
+      "institutionCode": "CPC-01",
+      "serverHost": "192.168.4.123",
+      "wsPort": 3000,
+      "noExposedSecrets": true,
+      "isPrivateLanIp": true
+    },
+    "discoverySecurity": {
+      "passed": true,
+      "corruptJsonFiltered": true,
+      "incompatibleVersionRejected": true,
+      "publicIpRejected": true
+    },
+    "agentAutoDiscovery": {
+      "passed": true,
+      "agentDiscovered": true,
+      "agentHelloAck": true,
+      "isOnlineInDb": true,
+      "status": "online",
+      "lastHeartbeatAt": "2026-11-10T01:37:36.234Z"
+    },
+    "physicalHardwareStreaming": {
+      "passed": true,
+      "timeToFirstFrameMs": 1768,
+      "framesDecoded": 10,
+      "bytesReceived": 178324,
+      "resolution": "1920x1080",
+      "fps": 30,
+      "agentCpuPercent": 7,
+      "agentMemMb": 28.7,
+      "serverCpuPercent": 0,
+      "serverMemMb": 87.9,
+      "teardownTimeMs": 502
+    },
+    "capacityMatrix": {
+      "tier_1": {
+        "levelA_dbRegistered": 1,
+        "levelB_socketIoConnected": 1,
+        "levelC_heartbeats": 1,
+        "levelD_signalingSupported": true,
+        "levelE_hardwareVideoTransmissions": 1,
+        "serverCpuPercent": 1.8,
+        "serverMemMb": 88
+      },
+      "tier_5": {
+        "levelA_dbRegistered": 5,
+        "levelB_socketIoConnected": 5,
+        "levelC_heartbeats": 5,
+        "levelD_signalingSupported": true,
+        "levelE_hardwareVideoTransmissions": 1,
+        "serverCpuPercent": 13.4,
+        "serverMemMb": 88.5
+      },
+      "tier_10": {
+        "levelA_dbRegistered": 10,
+        "levelB_socketIoConnected": 10,
+        "levelC_heartbeats": 10,
+        "levelD_signalingSupported": true,
+        "levelE_hardwareVideoTransmissions": 1,
+        "serverCpuPercent": 43.6,
+        "serverMemMb": 91.2
+      },
+      "tier_20": {
+        "levelA_dbRegistered": 20,
+        "levelB_socketIoConnected": 20,
+        "levelC_heartbeats": 20,
+        "levelD_signalingSupported": true,
+        "levelE_hardwareVideoTransmissions": 1,
+        "serverCpuPercent": 35.6,
+        "serverMemMb": 91.6
+      },
+      "tier_40": {
+        "levelA_dbRegistered": 40,
+        "levelB_socketIoConnected": 40,
+        "levelC_heartbeats": 40,
+        "levelD_signalingSupported": true,
+        "levelE_hardwareVideoTransmissions": 1,
+        "serverCpuPercent": 54.1,
+        "serverMemMb": 98.5
+      }
+    },
+    "multiTenantIsolation": {
+      "passed": true,
+      "deviceQueryRestricted": true,
+      "classroomQueryRestricted": true,
+      "tenantId": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+    },
+    "zeroCloudOffline": {
+      "passed": true,
+      "noExternalFonts": true,
+      "noExternalCdn": true,
+      "hostCandidatesOnly": true
+    }
+  }
+}

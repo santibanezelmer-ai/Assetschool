@@ -5,12 +5,33 @@ import CoreGraphics
 setbuf(__stdoutp, nil)
 
 let isJsonMode = CommandLine.arguments.contains("--json-signaling")
-let isGatewayMode = CommandLine.arguments.contains("--gateway-mode") || (!isJsonMode && CommandLine.arguments.contains("--connect"))
+let isDiscoveryMode = CommandLine.arguments.contains("--discover")
+let isGatewayMode = isDiscoveryMode || CommandLine.arguments.contains("--gateway-mode") || (!isJsonMode && CommandLine.arguments.contains("--connect"))
+
+var deviceId = "02020202-0202-0202-0202-020202020202"
+if let idIdx = CommandLine.arguments.firstIndex(of: "--device-id"), idIdx + 1 < CommandLine.arguments.count {
+    deviceId = CommandLine.arguments[idIdx + 1]
+}
+
+var macAddress = "02:42:AC:11:00:03"
+if let macIdx = CommandLine.arguments.firstIndex(of: "--mac-address"), macIdx + 1 < CommandLine.arguments.count {
+    macAddress = CommandLine.arguments[macIdx + 1]
+}
+
+var hostname = ProcessInfo.processInfo.hostName
+if let hostIdx = CommandLine.arguments.firstIndex(of: "--hostname"), hostIdx + 1 < CommandLine.arguments.count {
+    hostname = CommandLine.arguments[hostIdx + 1]
+}
+
+var manualGatewayUrl: URL? = nil
+if let urlIdx = CommandLine.arguments.firstIndex(of: "--gateway-url"), urlIdx + 1 < CommandLine.arguments.count {
+    manualGatewayUrl = URL(string: CommandLine.arguments[urlIdx + 1])
+}
 
 if !isJsonMode {
     print("==================================================")
     print(" AssetSchool Native Agent — macOS (Swift)")
-    print(" Fase 02.3: Validación End-to-End y Streaming Continuo")
+    print(" Fase 02.7: Descubrimiento LAN y Validación Operacional")
     print("==================================================")
 
     let host = ProcessInfo.processInfo.hostName
@@ -18,8 +39,9 @@ if !isJsonMode {
 
     print("[INFO] Hostname: \(host)")
     print("[INFO] Sistema Operativo: macOS \(osVersion)")
+    print("[INFO] Device ID: \(deviceId)")
 
-    let capabilities = MacOSCapabilityReporter.report(deviceId: "02020202-0202-0202-0202-020202020202")
+    let capabilities = MacOSCapabilityReporter.report(deviceId: deviceId)
     print("[INFO] Capacidades Nativas Declaradas:")
     if let data = try? JSONSerialization.data(withJSONObject: capabilities, options: .prettyPrinted),
        let str = String(data: data, encoding: .utf8) {
@@ -30,16 +52,108 @@ if !isJsonMode {
 let indicator = CaptureIndicatorWindow()
 let webrtcEngine = WebRtcNativeEngine()
 
-if isGatewayMode {
-    print("\n[MODO GATEWAY] Conectando a infraestructura central de AssetSchool...")
+if isDiscoveryMode {
+    print("\n[DESCUBRIMIENTO LAN] Escuchando balizas UDP en puerto 48500...")
     print("[VERIFICACIÓN TCC] Permiso de captura de pantalla concedido: \(webrtcEngine.hasTccPermission)")
     
-    let gatewayUrl = URL(string: "ws://127.0.0.1:3000/socket.io/?EIO=4&transport=websocket")!
+    let listener = DiscoveryListener(port: 48500)
+    var connected = false
+    
+    listener.onServerDiscovered = { server in
+        guard !connected else { return }
+        connected = true
+        listener.stop()
+        
+        print("\n==================================================")
+        print(" [DESCUBRIMIENTO ÉXITO] Servidor AssetSchool detectado!")
+        print("  -> ID Servidor:        \(server.serverId)")
+        print("  -> Versión Servidor:   \(server.serverVersion) (Protocolo: \(server.protocolVersion))")
+        print("  -> Institución:        \(server.institutionName) [\(server.institutionCode)]")
+        print("  -> Host Servidor:      \(server.serverHost):\(server.wsPort)")
+        print("  -> URL WebSocket:      \(server.wsUrl)")
+        print("  -> URL API REST:       \(server.httpUrl)")
+        print("  -> IP Emisora UDP:     \(server.senderIp)")
+        print("==================================================")
+        
+        let wsConnectUrlString = "ws://\(server.serverHost):\(server.wsPort)\(server.wsPath)/?EIO=4&transport=websocket"
+        guard let wsUrl = URL(string: wsConnectUrlString) else {
+            print("[ERROR FATAL] URL generada inválida: \(wsConnectUrlString)")
+            exit(1)
+        }
+        
+        print("\n[CONEXIÓN AUTOMÁTICA] Conectando por Socket.IO al Gateway descubierto...")
+        let gatewayClient = GatewayClient(
+            gatewayUrl: wsUrl,
+            deviceId: deviceId,
+            macAddress: macAddress,
+            hostname: hostname,
+            webrtcEngine: webrtcEngine
+        )
+        
+        gatewayClient.onStreamStarted = {
+            indicator.show(teacherName: "Mariana Fuentes (Docente)")
+        }
+        
+        gatewayClient.onStreamStopped = {
+            indicator.hide()
+        }
+        
+        gatewayClient.connect()
+    }
+    
+    listener.onError = { err in
+        print("[ERROR DISCOVERY] \(err)")
+    }
+    
+    if !listener.start() {
+        print("[ERROR FATAL] No se pudo iniciar el receptor de descubrimiento UDP.")
+        if let fallback = manualGatewayUrl {
+            print("[FALLBACK] Conectando a URL manual de respaldo: \(fallback)...")
+            let gatewayClient = GatewayClient(
+                gatewayUrl: fallback,
+                deviceId: deviceId,
+                macAddress: macAddress,
+                hostname: hostname,
+                webrtcEngine: webrtcEngine
+            )
+            gatewayClient.connect()
+        } else {
+            exit(1)
+        }
+    }
+    
+    // Timeout fallback if manual URL provided
+    if let fallback = manualGatewayUrl {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6.0) {
+            if !connected {
+                print("[DESCUBRIMIENTO TIMEOUT] No se detectó baliza UDP en 6s. Conectando a respaldo manual...")
+                connected = true
+                listener.stop()
+                let gatewayClient = GatewayClient(
+                    gatewayUrl: fallback,
+                    deviceId: deviceId,
+                    macAddress: macAddress,
+                    hostname: hostname,
+                    webrtcEngine: webrtcEngine
+                )
+                gatewayClient.connect()
+            }
+        }
+    }
+    
+    RunLoop.main.run()
+} else if isGatewayMode {
+    print("\n[MODO GATEWAY MANUAL] Conectando a infraestructura central de AssetSchool...")
+    print("[VERIFICACIÓN TCC] Permiso de captura de pantalla concedido: \(webrtcEngine.hasTccPermission)")
+    
+    let gatewayUrl = manualGatewayUrl ?? URL(string: "ws://127.0.0.1:3000/socket.io/?EIO=4&transport=websocket")!
+    print("[GATEWAY] URL de conexión: \(gatewayUrl)")
+    
     let gatewayClient = GatewayClient(
         gatewayUrl: gatewayUrl,
-        deviceId: "02020202-0202-0202-0202-020202020202",
-        macAddress: "02:42:AC:11:00:03",
-        hostname: "LAB01-MAC-02",
+        deviceId: deviceId,
+        macAddress: macAddress,
+        hostname: hostname,
         webrtcEngine: webrtcEngine
     )
     

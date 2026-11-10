@@ -7,6 +7,7 @@ import { ClassroomsModule } from './classrooms/classrooms.module';
 import { CommandsModule } from './commands/commands.module';
 import { AuditModule } from './audit/audit.module';
 import { GatewayModule } from './gateway/gateway.module';
+import { DiscoveryModule } from './discovery/discovery.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { GatewayModule } from './gateway/gateway.module';
     CommandsModule,
     AuditModule,
     GatewayModule,
+    DiscoveryModule,
   ],
 })
 export class AppModule {}

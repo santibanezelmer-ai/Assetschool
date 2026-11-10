@@ -10,6 +10,9 @@ export const ASSETSCHOOL_LAN_DISCOVERY_PORT = 48500;
 export const ASSETSCHOOL_AGENT_WS_PORT = 48501;
 
 export enum PacketType {
+  // LAN Discovery
+  DISCOVERY_BEACON = 'DISCOVERY_BEACON',
+
   // Handshake & Registration
   AGENT_HELLO = 'AGENT_HELLO',
   SERVER_HELLO_ACK = 'SERVER_HELLO_ACK',
@@ -73,6 +76,36 @@ export interface ProtocolEnvelope<T = unknown> {
 }
 
 // Payloads
+export interface DiscoveryBeaconPayload {
+  serverId: string;
+  serverVersion: string;
+  protocolVersion: string;
+  serverHost: string;
+  httpPort: number;
+  wsPort: number;
+  wsPath: string;
+  wsUrl: string;
+  httpUrl: string;
+  institutionId: string;
+  institutionCode: string;
+  institutionName: string;
+  timestamp: number;
+}
+
+export function isDiscoveryBeaconPayload(data: unknown): data is DiscoveryBeaconPayload {
+  if (!data || typeof data !== 'object') return false;
+  const p = data as Record<string, unknown>;
+  return (
+    typeof p.serverId === 'string' &&
+    typeof p.serverVersion === 'string' &&
+    typeof p.protocolVersion === 'string' &&
+    typeof p.httpPort === 'number' &&
+    typeof p.wsPort === 'number' &&
+    typeof p.institutionId === 'string' &&
+    typeof p.timestamp === 'number'
+  );
+}
+
 export interface AgentHelloPayload {
   hostname: string;
   macAddress: string;
