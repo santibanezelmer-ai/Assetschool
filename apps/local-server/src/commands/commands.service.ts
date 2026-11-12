@@ -1,12 +1,16 @@
-import { Injectable, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException, Inject, forwardRef, Optional } from '@nestjs/common';
 import { DatabaseService } from '../database/database.service';
 import { DispatchCommand } from '@assetschool/validators';
-import { CommandStatus, DeviceStatus } from '@assetschool/shared-types';
+import { CommandStatus, DeviceStatus, CommandType } from '@assetschool/shared-types';
 import { randomUUID } from 'crypto';
+import { AgentGateway } from '../gateway/agent.gateway';
 
 @Injectable()
 export class CommandsService {
-  constructor(private readonly databaseService: DatabaseService) {}
+  constructor(
+    private readonly databaseService: DatabaseService,
+    @Optional() @Inject(forwardRef(() => AgentGateway)) private readonly agentGateway?: AgentGateway,
+  ) {}
 
   async dispatch(dto: DispatchCommand, issuerUserId: string, issuerEmail: string, institutionId?: string) {
     const createdCommands: any[] = [];
@@ -58,6 +62,15 @@ export class CommandsService {
           DeviceStatus.ONLINE,
           device.id,
         ]);
+      }
+
+      // Deliver command to agent over WebSocket if connected
+      if (this.agentGateway) {
+        this.agentGateway.sendCommandToDevice(
+          device.id,
+          dto.commandType as unknown as CommandType,
+          dto.params || {},
+        );
       }
 
       createdCommands.push({

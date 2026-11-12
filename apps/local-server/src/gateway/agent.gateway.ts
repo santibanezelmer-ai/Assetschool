@@ -27,9 +27,11 @@ import {
   WebRtcSessionClosedPayload,
   WebRtcErrorPayload,
   ScreenStreamStatsPayload,
+  CommandDispatchPayload,
+  CommandResultPayload,
 } from '@assetschool/protocol';
 import { DatabaseService } from '../database/database.service';
-import { DeviceStatus, SystemRole } from '@assetschool/shared-types';
+import { DeviceStatus, SystemRole, CommandType, CommandStatus } from '@assetschool/shared-types';
 import { randomBytes, randomUUID } from 'crypto';
 
 interface AuthenticatedAgentSession {
@@ -151,10 +153,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   // TEACHER AUTHENTICATION & CLASSROOM JOIN
   // -------------------------------------------------------------
   @SubscribeMessage('TEACHER_JOIN_CLASSROOM')
-  @SubscribeMessage(PacketType.SESSION_JOIN_NOTICE)
   async handleTeacherJoin(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { token?: string; classroomId?: string },
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.handleTeacherJoinInternal(client, body);
+  }
+
+  @SubscribeMessage(PacketType.SESSION_JOIN_NOTICE)
+  async handleTeacherJoinNotice(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: any,
+  ): Promise<{ success: boolean; error?: string }> {
+    return this.handleTeacherJoinInternal(client, body?.payload || body);
+  }
+
+  private async handleTeacherJoinInternal(
+    client: Socket,
+    body: { token?: string; classroomId?: string },
   ): Promise<{ success: boolean; error?: string }> {
     const token = body?.token;
     if (!token) {
@@ -181,9 +197,14 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     const userId = decoded.sub || decoded.id;
     const role = decoded.role;
+    const normalizedRole = typeof role === 'string' ? role.toUpperCase() : role;
     const institutionId = decoded.institutionId || decoded.institution_id;
 
-    if (role !== SystemRole.TEACHER && role !== SystemRole.INSTITUTION_ADMIN && role !== SystemRole.SUPERADMIN) {
+    if (
+      normalizedRole !== SystemRole.TEACHER &&
+      normalizedRole !== SystemRole.INSTITUTION_ADMIN &&
+      normalizedRole !== SystemRole.SUPERADMIN
+    ) {
       return { success: false, error: 'Permisos insuficientes para supervisión de aula' };
     }
 
@@ -217,10 +238,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   @SubscribeMessage('TEACHER_LEAVE_CLASSROOM')
-  @SubscribeMessage(PacketType.SESSION_LEAVE_NOTICE)
   handleTeacherLeave(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { classroomId?: string },
+  ) {
+    return this.handleTeacherLeaveInternal(client, body);
+  }
+
+  @SubscribeMessage(PacketType.SESSION_LEAVE_NOTICE)
+  handleTeacherLeaveNotice(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: any,
+  ) {
+    return this.handleTeacherLeaveInternal(client, body?.payload || body);
+  }
+
+  private handleTeacherLeaveInternal(
+    client: Socket,
+    body: { classroomId?: string },
   ) {
     const teacherSession = this.connectedTeachers.get(client.id);
     if (!teacherSession) return { success: false };
@@ -603,10 +638,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   // WEBRTC SIGNALING ROUTING (OFFER, ANSWER, ICE)
   // -------------------------------------------------------------
   @SubscribeMessage(PacketType.WEBRTC_OFFER)
-  @SubscribeMessage(PacketType.SIGNAL_SDP_OFFER)
   handleWebRtcOffer(
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<WebRtcOfferPayload>,
+  ) {
+    this.routeWebRtcOffer(client, envelope);
+  }
+
+  @SubscribeMessage(PacketType.SIGNAL_SDP_OFFER)
+  handleSignalSdpOffer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<WebRtcOfferPayload>,
+  ) {
+    this.routeWebRtcOffer(client, envelope);
+  }
+
+  private routeWebRtcOffer(
+    client: Socket,
+    envelope: ProtocolEnvelope<WebRtcOfferPayload>,
   ) {
     const payload = envelope.payload;
     const sessionId = payload.sessionId;
@@ -636,10 +685,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   @SubscribeMessage(PacketType.WEBRTC_ANSWER)
-  @SubscribeMessage(PacketType.SIGNAL_SDP_ANSWER)
   handleWebRtcAnswer(
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<WebRtcAnswerPayload>,
+  ) {
+    this.routeWebRtcAnswer(client, envelope);
+  }
+
+  @SubscribeMessage(PacketType.SIGNAL_SDP_ANSWER)
+  handleSignalSdpAnswer(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<WebRtcAnswerPayload>,
+  ) {
+    this.routeWebRtcAnswer(client, envelope);
+  }
+
+  private routeWebRtcAnswer(
+    client: Socket,
+    envelope: ProtocolEnvelope<WebRtcAnswerPayload>,
   ) {
     const payload = envelope.payload;
     const sessionId = payload.sessionId;
@@ -667,10 +730,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   @SubscribeMessage(PacketType.WEBRTC_ICE_CANDIDATE)
-  @SubscribeMessage(PacketType.SIGNAL_ICE_CANDIDATE)
   handleIceCandidate(
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<WebRtcIceCandidatePayload>,
+  ) {
+    this.routeIceCandidate(client, envelope);
+  }
+
+  @SubscribeMessage(PacketType.SIGNAL_ICE_CANDIDATE)
+  handleSignalIceCandidate(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<WebRtcIceCandidatePayload>,
+  ) {
+    this.routeIceCandidate(client, envelope);
+  }
+
+  private routeIceCandidate(
+    client: Socket,
+    envelope: ProtocolEnvelope<WebRtcIceCandidatePayload>,
   ) {
     const payload = envelope.payload;
     const sessionId = payload.sessionId;
@@ -846,6 +923,208 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         this.stopStreamInternal(sessionId, reason);
       }
     }
+  }
+
+  // -------------------------------------------------------------
+  // COMMAND DISPATCH & PEDAGOGICAL LOCK
+  // -------------------------------------------------------------
+  public sendCommandToDevice(
+    deviceId: string,
+    commandType: CommandType,
+    params: Record<string, unknown> = {},
+    issuerUserId?: string,
+  ): boolean {
+    const socketId = this.deviceToAgentSocket.get(deviceId);
+    if (!socketId) {
+      this.logger.warn(`No se pudo enviar ${commandType} a dispositivo ${deviceId}: agente no conectado`);
+      return false;
+    }
+
+    const commandId = randomUUID();
+    const envelope: ProtocolEnvelope<CommandDispatchPayload> = createEnvelope(
+      PacketType.COMMAND_DISPATCH,
+      'SERVER',
+      'server',
+      {
+        commandId,
+        commandType,
+        issuedAt: Date.now(),
+        params,
+        requiresAck: true,
+      },
+    );
+
+    if (this.databaseService.isDatabaseReady) {
+      const issuer = issuerUserId || 'cccccccc-cccc-cccc-cccc-cccccccccccc';
+      this.databaseService.query(
+        `INSERT INTO commands (id, device_id, issuer_user_id, command_type, status, issued_at, payload_json) 
+         VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+        [commandId, deviceId, issuer, commandType, 'SENT', JSON.stringify(params)],
+      ).catch((err) => this.logger.warn(`Error guardando comando en DB: ${err.message}`));
+    }
+
+    this.server.to(socketId).emit(PacketType.COMMAND_DISPATCH, envelope);
+    this.server.to(socketId).emit('COMMAND_DISPATCH', envelope);
+    this.logger.log(`Comando ${commandType} enviado a dispositivo ${deviceId} (Socket: ${socketId})`);
+    return true;
+  }
+
+  @SubscribeMessage('TEACHER_LOCK_DEVICE')
+  async handleTeacherLockDevice(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string; message?: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) {
+      return { success: false, error: 'Docente no autenticado' };
+    }
+
+    const { deviceId, message } = body;
+    const sent = this.sendCommandToDevice(
+      deviceId,
+      CommandType.LOCK_SCREEN,
+      {
+        message: message || 'Atención al frente. La clase está en pausa pedagógica.',
+        teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+        lockInput: true,
+      },
+      teacherSession.userId,
+    );
+
+    if (this.databaseService.isDatabaseReady) {
+      await this.databaseService.query(
+        'UPDATE devices SET status = $1 WHERE id = $2',
+        [DeviceStatus.LOCKED, deviceId],
+      ).catch(() => {});
+    }
+
+    this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.LOCKED });
+    return { success: sent };
+  }
+
+  @SubscribeMessage('TEACHER_UNLOCK_DEVICE')
+  async handleTeacherUnlockDevice(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) {
+      return { success: false, error: 'Docente no autenticado' };
+    }
+
+    const { deviceId } = body;
+    const sent = this.sendCommandToDevice(
+      deviceId,
+      CommandType.UNLOCK_SCREEN,
+      {
+        teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+      },
+      teacherSession.userId,
+    );
+
+    if (this.databaseService.isDatabaseReady) {
+      await this.databaseService.query(
+        'UPDATE devices SET status = $1 WHERE id = $2',
+        [DeviceStatus.ONLINE, deviceId],
+      ).catch(() => {});
+    }
+
+    this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.ONLINE });
+    return { success: sent };
+  }
+
+  @SubscribeMessage('TEACHER_LOCK_CLASSROOM')
+  async handleTeacherLockClassroom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { classroomId?: string; message?: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) {
+      return { success: false, error: 'Docente no autenticado' };
+    }
+
+    const message = body?.message || 'Atención al frente. La clase está en pausa pedagógica.';
+    let count = 0;
+
+    for (const [deviceId, socketId] of this.deviceToAgentSocket.entries()) {
+      this.sendCommandToDevice(
+        deviceId,
+        CommandType.LOCK_SCREEN,
+        {
+          message,
+          teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+          lockInput: true,
+        },
+        teacherSession.userId,
+      );
+      if (this.databaseService.isDatabaseReady) {
+        await this.databaseService.query(
+          'UPDATE devices SET status = $1 WHERE id = $2',
+          [DeviceStatus.LOCKED, deviceId],
+        ).catch(() => {});
+      }
+      this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.LOCKED });
+      count++;
+    }
+
+    return { success: true, count };
+  }
+
+  @SubscribeMessage('TEACHER_UNLOCK_CLASSROOM')
+  async handleTeacherUnlockClassroom(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { classroomId?: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) {
+      return { success: false, error: 'Docente no autenticado' };
+    }
+
+    let count = 0;
+    for (const [deviceId, socketId] of this.deviceToAgentSocket.entries()) {
+      this.sendCommandToDevice(
+        deviceId,
+        CommandType.UNLOCK_SCREEN,
+        {
+          teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+        },
+        teacherSession.userId,
+      );
+      if (this.databaseService.isDatabaseReady) {
+        await this.databaseService.query(
+          'UPDATE devices SET status = $1 WHERE id = $2',
+          [DeviceStatus.ONLINE, deviceId],
+        ).catch(() => {});
+      }
+      this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.ONLINE });
+      count++;
+    }
+
+    return { success: true, count };
+  }
+
+  @SubscribeMessage(PacketType.COMMAND_RESULT)
+  @SubscribeMessage('COMMAND_RESULT')
+  async handleCommandResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<CommandResultPayload>,
+  ) {
+    const payload = envelope?.payload;
+    if (!payload?.commandId) return;
+
+    if (this.databaseService.isDatabaseReady) {
+      await this.databaseService.query(
+        `UPDATE commands SET status = $1, executed_at = NOW(), result_json = $2, error_details = $3 WHERE id = $4`,
+        [
+          payload.success ? CommandStatus.EXECUTED : CommandStatus.FAILED,
+          JSON.stringify(payload),
+          payload.error || null,
+          payload.commandId,
+        ],
+      ).catch(() => {});
+    }
+
+    this.logger.log(`Resultado de comando recibido: ${payload.commandId} (Éxito: ${payload.success})`);
   }
 
   private checkStaleConnections() {

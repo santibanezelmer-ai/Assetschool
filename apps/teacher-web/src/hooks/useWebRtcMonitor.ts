@@ -109,6 +109,13 @@ export function useWebRtcMonitor(classroomId?: string) {
       setGatewayError(`Error de conexión con el Gateway LAN (Puerto 48501): ${err.message}`);
     });
 
+    // Handle Device Status Updates (e.g. locked / online)
+    socket.on('DEVICE_STATUS_CHANGED', ({ deviceId, status }: { deviceId: string; status: any }) => {
+      setDevices((prev) =>
+        prev.map((d) => (d.id === deviceId ? { ...d, status } : d))
+      );
+    });
+
     // Handle Incoming WebRTC Signaling Events
     socket.on(PacketType.WEBRTC_SESSION_CREATED, (envelope: ProtocolEnvelope<any>) => {
       const payload = envelope.payload;
@@ -423,6 +430,46 @@ export function useWebRtcMonitor(classroomId?: string) {
     });
   }, [streams, stopStream]);
 
+  // Lock single device
+  const lockDevice = useCallback((deviceId: string, message?: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_LOCK_DEVICE', { deviceId, message });
+    }
+    setDevices((prev) =>
+      prev.map((d) => (d.id === deviceId ? { ...d, status: 'locked' } : d))
+    );
+  }, []);
+
+  // Unlock single device
+  const unlockDevice = useCallback((deviceId: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_UNLOCK_DEVICE', { deviceId });
+    }
+    setDevices((prev) =>
+      prev.map((d) => (d.id === deviceId ? { ...d, status: 'online' } : d))
+    );
+  }, []);
+
+  // Lock all classroom devices
+  const lockAll = useCallback((message?: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_LOCK_CLASSROOM', { classroomId, message });
+    }
+    setDevices((prev) =>
+      prev.map((d) => (d.status === 'online' ? { ...d, status: 'locked' } : d))
+    );
+  }, [classroomId]);
+
+  // Unlock all classroom devices
+  const unlockAll = useCallback(() => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_UNLOCK_CLASSROOM', { classroomId });
+    }
+    setDevices((prev) =>
+      prev.map((d) => (d.status === 'locked' ? { ...d, status: 'online' } : d))
+    );
+  }, [classroomId]);
+
   if (typeof window !== 'undefined') {
     (window as any).__assetschool_monitor = {
       devices,
@@ -432,6 +479,10 @@ export function useWebRtcMonitor(classroomId?: string) {
       stopStream,
       startAllStreams,
       stopAllStreams,
+      lockDevice,
+      unlockDevice,
+      lockAll,
+      unlockAll,
       getPeerConnection: (id: string) => peerConnectionsRef.current.get(id),
     };
   }
@@ -445,6 +496,10 @@ export function useWebRtcMonitor(classroomId?: string) {
     stopStream,
     startAllStreams,
     stopAllStreams,
+    lockDevice,
+    unlockDevice,
+    lockAll,
+    unlockAll,
     refreshDevices: fetchDevices,
   };
 }

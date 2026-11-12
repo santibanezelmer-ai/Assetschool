@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { X, Play, Square, RefreshCw, Activity, ShieldAlert, Cpu, Network } from 'lucide-react';
+import { X, Play, Square, RefreshCw, Activity, ShieldAlert, Cpu, Network, Lock, Unlock } from 'lucide-react';
 import { MonitorDevice, ActiveStreamState } from '../hooks/useWebRtcMonitor';
 
 interface DeviceInspectionModalProps {
@@ -8,6 +8,8 @@ interface DeviceInspectionModalProps {
   onClose: () => void;
   onStartStream: (deviceId: string, tier: 'thumbnail' | 'individual') => void;
   onStopStream: (deviceId: string) => void;
+  onLockDevice?: (deviceId: string) => void;
+  onUnlockDevice?: (deviceId: string) => void;
 }
 
 export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
@@ -16,10 +18,13 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
   onClose,
   onStartStream,
   onStopStream,
+  onLockDevice,
+  onUnlockDevice,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isStreaming = streamState?.status === 'streaming';
   const isConnecting = streamState?.status === 'connecting' || streamState?.status === 'requesting';
+  const isLocked = device?.status === 'locked';
 
   useEffect(() => {
     if (videoRef.current && streamState?.mediaStream) {
@@ -44,13 +49,39 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
               <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300">
                 {device.osType}
               </span>
+              {isLocked && (
+                <span className="text-[11px] font-bold uppercase px-2 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-1 animate-pulse">
+                  <Lock className="w-3 h-3" /> PANTALLA BLOQUEADA
+                </span>
+              )}
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400">
               IP LAN: <span className="font-mono">{device.localIp}</span> | Ventana Activa: <span className="font-medium">{device.activeApp}</span>
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
+            {/* Lock / Unlock Screen button */}
+            {!device.isRevoked && device.status !== 'offline' && (
+              isLocked ? (
+                <button
+                  onClick={() => onUnlockDevice?.(device.id)}
+                  className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Unlock className="w-3.5 h-3.5" />
+                  Desbloquear Pantalla
+                </button>
+              ) : (
+                <button
+                  onClick={() => onLockDevice?.(device.id)}
+                  className="px-3 py-1.5 rounded-lg bg-amber-600 hover:bg-amber-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all"
+                >
+                  <Lock className="w-3.5 h-3.5" />
+                  Bloquear Pantalla
+                </button>
+              )
+            )}
+
             {isStreaming ? (
               <button
                 onClick={() => onStopStream(device.id)}

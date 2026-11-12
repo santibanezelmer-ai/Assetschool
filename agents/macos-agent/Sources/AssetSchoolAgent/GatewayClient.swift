@@ -189,6 +189,9 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
             webrtcEngine.close()
             self.currentSessionId = ""
             self.onStreamStopped?()
+
+        case "COMMAND_DISPATCH", "command:dispatch":
+            handleCommandDispatch(envelope: envelope, payload: payload)
             
         default:
             break
@@ -251,5 +254,60 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
                 print("[GATEWAY CLIENT ERROR] Error al crear oferta WebRTC: \(error.localizedDescription)")
             }
         }
+    }
+    
+    private func handleCommandDispatch(envelope: [String: Any]?, payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let commandId = (payload["commandId"] as? String) ?? UUID().uuidString
+        let commandType = (payload["commandType"] as? String) ?? ""
+        let params = payload["params"] as? [String: Any]
+        
+        print("[GATEWAY CLIENT] Comando recibido: \(commandType) (ID: \(commandId))")
+        
+        switch commandType {
+        case "LOCK_SCREEN":
+            let message = params?["message"] as? String
+            let teacherName = (params?["teacherName"] as? String) ?? "Mariana Fuentes"
+            let institutionName = (params?["institutionName"] as? String) ?? "Instituto Politécnico Central"
+            let classroomName = params?["classroomName"] as? String
+            
+            LockCurtainManager.shared.show(
+                message: message,
+                teacherName: teacherName,
+                institutionName: institutionName,
+                classroomName: classroomName
+            )
+            sendCommandResult(commandId: commandId, success: true)
+            
+        case "UNLOCK_SCREEN":
+            LockCurtainManager.shared.hide()
+            sendCommandResult(commandId: commandId, success: true)
+            
+        default:
+            print("[GATEWAY CLIENT AVISO] Tipo de comando no manejado por este agente: \(commandType)")
+            sendCommandResult(commandId: commandId, success: false, error: "Comando no soportado")
+        }
+    }
+    
+    private func sendCommandResult(commandId: String, success: Bool, error: String? = nil) {
+        var resPayload: [String: Any] = [
+            "commandId": commandId,
+            "completedAt": Int(Date().timeIntervalSince1970 * 1000),
+            "success": success
+        ]
+        if let err = error {
+            resPayload["error"] = err
+        }
+        
+        let resultEnvelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "COMMAND_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": resPayload
+        ]
+        
+        sendEvent(name: "COMMAND_RESULT", payload: resultEnvelope)
     }
 }

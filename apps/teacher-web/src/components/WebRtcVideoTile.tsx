@@ -1,5 +1,5 @@
 import React, { useRef, useEffect } from 'react';
-import { Monitor, Play, Square, Maximize2, AlertCircle, Wifi, RefreshCw } from 'lucide-react';
+import { Monitor, Play, Square, Maximize2, AlertCircle, Wifi, RefreshCw, Lock, Unlock } from 'lucide-react';
 import { DevicePlatform } from '@assetschool/shared-types';
 import { MonitorDevice, ActiveStreamState } from '../hooks/useWebRtcMonitor';
 
@@ -9,6 +9,8 @@ interface WebRtcVideoTileProps {
   onStartStream: (deviceId: string) => void;
   onStopStream: (deviceId: string) => void;
   onInspect: (device: MonitorDevice) => void;
+  onLockDevice?: (deviceId: string) => void;
+  onUnlockDevice?: (deviceId: string) => void;
 }
 
 export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
@@ -17,11 +19,14 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
   onStartStream,
   onStopStream,
   onInspect,
+  onLockDevice,
+  onUnlockDevice,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isStreaming = streamState?.status === 'streaming';
   const isConnecting = streamState?.status === 'connecting' || streamState?.status === 'requesting';
   const isError = streamState?.status === 'error';
+  const isLocked = device.status === 'locked';
 
   useEffect(() => {
     if (videoRef.current && streamState?.mediaStream) {
@@ -46,7 +51,7 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
   };
 
   return (
-    <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden shadow-sm hover:border-sky-500/80 transition-all flex flex-col group">
+    <div className={`bg-white dark:bg-slate-900 border ${isLocked ? 'border-amber-500/80 ring-1 ring-amber-500/30' : 'border-slate-200 dark:border-slate-800'} rounded-xl overflow-hidden shadow-sm hover:border-sky-500/80 transition-all flex flex-col group`}>
       {/* Header bar */}
       <div className="px-3.5 py-2.5 bg-slate-50 dark:bg-slate-800/80 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between text-xs">
         <div className="flex items-center gap-2 truncate">
@@ -62,6 +67,11 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
         </div>
 
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          {isLocked && (
+            <span className="text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-0.5 animate-pulse">
+              <Lock className="w-2.5 h-2.5" /> BLOQUEADO
+            </span>
+          )}
           <span className={`text-[10px] font-bold uppercase px-1.5 py-0.5 rounded ${getOsColor(device.osType)}`}>
             {device.osType}
           </span>
@@ -87,7 +97,26 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
         {/* Fallback View when not actively rendering WebRTC track */}
         {!isStreaming && (
           <div className="w-full h-full flex flex-col items-center justify-center p-4 text-center">
-            {isConnecting ? (
+            {isLocked ? (
+              <div className="flex flex-col items-center gap-2">
+                <div className="p-3 rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/40 animate-pulse">
+                  <Lock className="w-7 h-7" />
+                </div>
+                <div className="text-center">
+                  <span className="text-xs font-bold text-amber-300 block">Pausa Pedagógica Activa</span>
+                  <span className="text-[11px] text-slate-400">Pantalla y periféricos bloqueados</span>
+                </div>
+                {onUnlockDevice && (
+                  <button
+                    onClick={() => onUnlockDevice(device.id)}
+                    className="mt-1 px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-xs flex items-center gap-1 shadow-md transition-all"
+                  >
+                    <Unlock className="w-3 h-3" />
+                    Desbloquear
+                  </button>
+                )}
+              </div>
+            ) : isConnecting ? (
               <div className="flex flex-col items-center gap-2">
                 <RefreshCw className="w-8 h-8 text-sky-400 animate-spin" />
                 <span className="text-xs text-sky-300 font-medium">Negociando WebRTC P2P (LAN)...</span>
@@ -137,8 +166,31 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
           </div>
         )}
 
-        {/* Action Button Controls Overlay (Top Right & Bottom Right) */}
+        {/* Action Button Controls Overlay (Top Right) */}
         <div className="absolute top-2 right-2 flex items-center gap-1.5">
+          {/* Lock / Unlock Individual Device Button */}
+          {!device.isRevoked && device.status !== 'offline' && (
+            isLocked ? (
+              <button
+                onClick={() => onUnlockDevice?.(device.id)}
+                title="Desbloquear pantalla de este estudiante"
+                className="p-1.5 rounded bg-emerald-600/90 hover:bg-emerald-600 text-white shadow-md transition-all flex items-center gap-1 text-[11px] font-semibold"
+              >
+                <Unlock className="w-3 h-3" />
+                <span className="hidden group-hover:inline">Desbloquear</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => onLockDevice?.(device.id)}
+                title="Bloquear pantalla (Pausa Pedagógica)"
+                className="p-1.5 rounded bg-amber-600/90 hover:bg-amber-600 text-white shadow-md transition-all flex items-center gap-1 text-[11px] font-semibold"
+              >
+                <Lock className="w-3 h-3" />
+                <span className="hidden group-hover:inline">Bloquear</span>
+              </button>
+            )
+          )}
+
           {isStreaming ? (
             <button
               onClick={() => onStopStream(device.id)}
@@ -174,11 +226,11 @@ export const WebRtcVideoTile: React.FC<WebRtcVideoTileProps> = ({
         {/* Bottom Banner Status Info */}
         <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between text-[10px] text-slate-300 bg-slate-950/70 backdrop-blur-sm px-2 py-0.5 rounded border border-slate-800/60">
           <span className="truncate flex items-center gap-1">
-            <Wifi className={`w-3 h-3 ${device.status === 'online' ? 'text-emerald-400' : 'text-slate-500'}`} />
+            <Wifi className={`w-3 h-3 ${device.status === 'online' ? 'text-emerald-400' : isLocked ? 'text-amber-400' : 'text-slate-500'}`} />
             {device.localIp}
           </span>
           <span className="font-mono text-slate-400 truncate max-w-[150px]">
-            {device.activeApp}
+            {isLocked ? 'PANTALLA BLOQUEADA' : device.activeApp}
           </span>
         </div>
       </div>

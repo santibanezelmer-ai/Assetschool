@@ -163,6 +163,19 @@ export interface CommandDispatchPayload {
   requiresAck: boolean;
 }
 
+export interface LockScreenParams {
+  teacherName: string;
+  institutionName?: string;
+  classroomName?: string;
+  message?: string;
+  lockInput?: boolean;
+}
+
+export interface UnlockScreenParams {
+  teacherName: string;
+  reason?: string;
+}
+
 export interface CommandAckPayload {
   commandId: string;
   receivedAt: number;
