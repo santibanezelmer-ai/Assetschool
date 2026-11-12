@@ -38,6 +38,11 @@ export function useWebRtcMonitor(classroomId?: string) {
   const [isConnectedToGateway, setIsConnectedToGateway] = useState<boolean>(false);
   const [gatewayError, setGatewayError] = useState<string | null>(null);
 
+  // NetSupport Parity States
+  const [remoteFiles, setRemoteFiles] = useState<Record<string, { currentPath: string; parentPath?: string; items: any[] }>>({});
+  const [remoteProcesses, setRemoteProcesses] = useState<Record<string, any[]>>({});
+  const [fileTransferStatus, setFileTransferStatus] = useState<string | null>(null);
+
   const socketRef = useRef<Socket | null>(null);
   const peerConnectionsRef = useRef<Map<string, RTCPeerConnection>>(new Map()); // deviceId -> RTCPeerConnection
   const statsTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
@@ -114,6 +119,74 @@ export function useWebRtcMonitor(classroomId?: string) {
       setDevices((prev) =>
         prev.map((d) => (d.id === deviceId ? { ...d, status } : d))
       );
+    });
+
+    // NetSupport File & Process Event Listeners
+    socket.on('FILE_LIST_DIR_RESULT', (payload: any) => {
+      const data = payload?.payload || payload;
+      if (data?.deviceId) {
+        setRemoteFiles((prev) => ({
+          ...prev,
+          [data.deviceId]: {
+            currentPath: data.currentPath,
+            parentPath: data.parentPath,
+            items: data.items || [],
+          },
+        }));
+      }
+    });
+
+    socket.on('FILE_SEND_RESULT', (payload: any) => {
+      const data = payload?.payload || payload;
+      if (data?.success) {
+        setFileTransferStatus(`Archivo enviado con éxito a ${data.savedPath || 'equipo'}`);
+      } else {
+        setFileTransferStatus(`Error en envío: ${data.error || 'fallo desconocido'}`);
+      }
+      setTimeout(() => setFileTransferStatus(null), 4000);
+    });
+
+    socket.on('FILE_COLLECT_RESULT', (payload: any) => {
+      const data = payload?.payload || payload;
+      if (data?.success && data?.fileContentBase64) {
+        // Automatically download collected file in browser
+        const byteCharacters = atob(data.fileContentBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const blob = new Blob([byteArray]);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = data.fileName || 'trabajo_alumno.dat';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        setFileTransferStatus(`Trabajo recolectado y descargado: ${data.fileName}`);
+      } else {
+        setFileTransferStatus(`Error al recolectar trabajo: ${data.error || 'archivo no accesible'}`);
+      }
+      setTimeout(() => setFileTransferStatus(null), 4000);
+    });
+
+    socket.on('PROCESS_LIST_RESULT', (payload: any) => {
+      const data = payload?.payload || payload;
+      if (data?.deviceId) {
+        setRemoteProcesses((prev) => ({
+          ...prev,
+          [data.deviceId]: data.processes || [],
+        }));
+      }
+    });
+
+    socket.on('KILL_PROCESS_RESULT', (payload: any) => {
+      const data = payload?.payload || payload;
+      if (data?.deviceId && data?.success) {
+        socket.emit('TEACHER_REQUEST_PROCESSES', { deviceId: data.deviceId });
+      }
     });
 
     // Handle Incoming WebRTC Signaling Events
@@ -470,6 +543,71 @@ export function useWebRtcMonitor(classroomId?: string) {
     );
   }, [classroomId]);
 
+  // File Transfer: List student directory
+  const listRemoteDir = useCallback((deviceId: string, dirPath?: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_LIST_DIR', { deviceId, dirPath });
+    }
+  }, []);
+
+  // File Transfer: Send file to student or broadcast to all
+  const sendRemoteFile = useCallback((
+    deviceId: string | undefined,
+    broadcastToAll: boolean,
+    fileName: string,
+    fileContentBase64: string,
+    targetDir?: string,
+  ) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_SEND_FILE', {
+        deviceId,
+        broadcastToAll,
+        fileName,
+        fileSizeBytes: Math.round((fileContentBase64.length * 3) / 4),
+        fileContentBase64,
+        targetDir,
+      });
+    }
+  }, []);
+
+  // File Transfer: Collect file from student
+  const collectRemoteFile = useCallback((deviceId: string, filePath: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_COLLECT_FILE', { deviceId, filePath });
+    }
+  }, []);
+
+  // Process Control: Request list of running applications
+  const requestProcesses = useCallback((deviceId: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_REQUEST_PROCESSES', { deviceId });
+    }
+  }, []);
+
+  // Process Control: Terminate or kill application
+  const killProcess = useCallback((deviceId: string, pid?: number, processName?: string, bundleId?: string) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_KILL_PROCESS', { deviceId, pid, processName, bundleId });
+    }
+  }, []);
+
+  // Interactive Remote Control: Mouse / Keyboard injection
+  const sendRemoteInput = useCallback((deviceId: string, event: {
+    type: string;
+    x?: number;
+    y?: number;
+    button?: string;
+    keyCode?: number;
+    keyText?: string;
+  }) => {
+    if (socketRef.current) {
+      socketRef.current.emit('TEACHER_REMOTE_INPUT', {
+        deviceId,
+        ...event,
+      });
+    }
+  }, []);
+
   if (typeof window !== 'undefined') {
     (window as any).__assetschool_monitor = {
       devices,
@@ -483,6 +621,12 @@ export function useWebRtcMonitor(classroomId?: string) {
       unlockDevice,
       lockAll,
       unlockAll,
+      listRemoteDir,
+      sendRemoteFile,
+      collectRemoteFile,
+      requestProcesses,
+      killProcess,
+      sendRemoteInput,
       getPeerConnection: (id: string) => peerConnectionsRef.current.get(id),
     };
   }
@@ -500,6 +644,15 @@ export function useWebRtcMonitor(classroomId?: string) {
     unlockDevice,
     lockAll,
     unlockAll,
+    remoteFiles,
+    remoteProcesses,
+    fileTransferStatus,
+    listRemoteDir,
+    sendRemoteFile,
+    collectRemoteFile,
+    requestProcesses,
+    killProcess,
+    sendRemoteInput,
     refreshDevices: fetchDevices,
   };
 }

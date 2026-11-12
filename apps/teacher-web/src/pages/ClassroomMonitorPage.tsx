@@ -13,10 +13,14 @@ import {
   Unlock,
   MessageSquare,
   X,
+  Upload,
+  Cpu,
 } from 'lucide-react';
 import { useWebRtcMonitor, MonitorDevice } from '../hooks/useWebRtcMonitor';
 import { WebRtcVideoTile } from '../components/WebRtcVideoTile';
 import { DeviceInspectionModal } from '../components/DeviceInspectionModal';
+import { FileTransferModal } from '../components/FileTransferModal';
+import { ProcessControlModal } from '../components/ProcessControlModal';
 
 export const ClassroomMonitorPage: React.FC = () => {
   const {
@@ -32,6 +36,15 @@ export const ClassroomMonitorPage: React.FC = () => {
     unlockDevice,
     lockAll,
     unlockAll,
+    remoteFiles,
+    remoteProcesses,
+    fileTransferStatus,
+    listRemoteDir,
+    sendRemoteFile,
+    collectRemoteFile,
+    requestProcesses,
+    killProcess,
+    sendRemoteInput,
     refreshDevices,
   } = useWebRtcMonitor();
 
@@ -39,6 +52,12 @@ export const ClassroomMonitorPage: React.FC = () => {
   const [isLockModalOpen, setIsLockModalOpen] = useState(false);
   const [lockMessage, setLockMessage] = useState('Atención al frente. La clase está en pausa pedagógica.');
   const [targetDeviceForLock, setTargetDeviceForLock] = useState<string | null>(null); // null = all, or deviceId
+
+  // NetSupport Parity Modals
+  const [isFileTransferOpen, setIsFileTransferOpen] = useState(false);
+  const [fileTransferDeviceId, setFileTransferDeviceId] = useState<string | undefined>(undefined);
+  const [isProcessControlOpen, setIsProcessControlOpen] = useState(false);
+  const [processControlDeviceId, setProcessControlDeviceId] = useState<string | undefined>(undefined);
 
   const activeStreamsCount = Object.values(streams).filter((s) => s.status === 'streaming').length;
   const onlineDevicesCount = devices.filter((d) => d.status === 'online' && !d.isRevoked).length;
@@ -57,6 +76,16 @@ export const ClassroomMonitorPage: React.FC = () => {
     }
     setIsLockModalOpen(false);
     setTargetDeviceForLock(null);
+  };
+
+  const handleOpenFileTransfer = (deviceId?: string) => {
+    setFileTransferDeviceId(deviceId);
+    setIsFileTransferOpen(true);
+  };
+
+  const handleOpenProcessControl = (deviceId?: string) => {
+    setProcessControlDeviceId(deviceId);
+    setIsProcessControlOpen(true);
   };
 
   return (
@@ -105,6 +134,28 @@ export const ClassroomMonitorPage: React.FC = () => {
               Desbloquear Aula ({lockedDevicesCount})
             </button>
           )}
+
+          {/* Transferir Archivos (NetSupport File Transfer Dual-Pane) */}
+          <button
+            onClick={() => handleOpenFileTransfer()}
+            disabled={onlineDevicesCount === 0}
+            className="px-3.5 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all disabled:opacity-50"
+            title="Transferencia de archivos y recolección de trabajos"
+          >
+            <Upload className="w-3.5 h-3.5" />
+            Transferir Archivos
+          </button>
+
+          {/* Control de Procesos y Apps */}
+          <button
+            onClick={() => handleOpenProcessControl()}
+            disabled={onlineDevicesCount === 0}
+            className="px-3.5 py-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-100 font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all border border-slate-700 disabled:opacity-50"
+            title="Supervisar y finalizar procesos o restringir aplicaciones"
+          >
+            <Cpu className="w-3.5 h-3.5" />
+            Procesos y Web
+          </button>
 
           <div className="h-6 w-px bg-slate-300 dark:bg-slate-700 mx-1 hidden sm:block" />
 
@@ -329,7 +380,34 @@ export const ClassroomMonitorPage: React.FC = () => {
         onStopStream={stopStream}
         onLockDevice={(id) => handleOpenLockModal(id)}
         onUnlockDevice={(id) => unlockDevice(id)}
+        onRemoteInput={sendRemoteInput}
       />
+
+      {/* NetSupport Parity: Dual-Pane File Transfer & Work Collection Modal */}
+      {isFileTransferOpen && (
+        <FileTransferModal
+          devices={devices}
+          selectedDeviceId={fileTransferDeviceId}
+          remoteFiles={remoteFiles}
+          fileTransferStatus={fileTransferStatus}
+          onClose={() => setIsFileTransferOpen(false)}
+          onListRemoteDir={listRemoteDir}
+          onSendFile={sendRemoteFile}
+          onCollectFile={collectRemoteFile}
+        />
+      )}
+
+      {/* NetSupport Parity: Application & Process Restriction Modal */}
+      {isProcessControlOpen && (
+        <ProcessControlModal
+          devices={devices}
+          selectedDeviceId={processControlDeviceId}
+          remoteProcesses={remoteProcesses}
+          onClose={() => setIsProcessControlOpen(false)}
+          onRequestProcesses={requestProcesses}
+          onKillProcess={killProcess}
+        />
+      )}
     </div>
   );
 };

@@ -1127,6 +1127,216 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.logger.log(`Resultado de comando recibido: ${payload.commandId} (Éxito: ${payload.success})`);
   }
 
+  // -------------------------------------------------------------
+  // DUAL-PANE FILE TRANSFER & WORK COLLECTION (NetSupport parity)
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_LIST_DIR')
+  async handleTeacherListDir(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string; dirPath?: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
+
+    const socketId = this.deviceToAgentSocket.get(body.deviceId);
+    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+
+    const envelope = createEnvelope(
+      PacketType.FILE_LIST_DIR,
+      'SERVER',
+      'server',
+      {
+        requestId: randomUUID(),
+        deviceId: body.deviceId,
+        dirPath: body.dirPath,
+      },
+    );
+    this.server.to(socketId).emit(PacketType.FILE_LIST_DIR, envelope);
+    this.server.to(socketId).emit('FILE_LIST_DIR', envelope);
+    return { success: true };
+  }
+
+  @SubscribeMessage('FILE_LIST_DIR_RESULT')
+  handleFileListDirResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<any>,
+  ) {
+    this.server.emit('FILE_LIST_DIR_RESULT', envelope?.payload || envelope);
+  }
+
+  @SubscribeMessage('TEACHER_SEND_FILE')
+  async handleTeacherSendFile(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      deviceId?: string;
+      broadcastToAll?: boolean;
+      fileName: string;
+      fileSizeBytes: number;
+      fileContentBase64: string;
+      targetDir?: string;
+    },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
+
+    const transferId = randomUUID();
+    const payload = {
+      transferId,
+      fileName: body.fileName,
+      fileSizeBytes: body.fileSizeBytes,
+      fileContentBase64: body.fileContentBase64,
+      targetDir: body.targetDir,
+    };
+
+    const envelope = createEnvelope(PacketType.FILE_SEND, 'SERVER', 'server', payload);
+
+    if (body.broadcastToAll) {
+      let count = 0;
+      for (const [devId, socketId] of this.deviceToAgentSocket.entries()) {
+        this.server.to(socketId).emit(PacketType.FILE_SEND, envelope);
+        this.server.to(socketId).emit('FILE_SEND', envelope);
+        count++;
+      }
+      return { success: true, count, broadcast: true };
+    } else if (body.deviceId) {
+      const socketId = this.deviceToAgentSocket.get(body.deviceId);
+      if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+      this.server.to(socketId).emit(PacketType.FILE_SEND, envelope);
+      this.server.to(socketId).emit('FILE_SEND', envelope);
+      return { success: true, broadcast: false };
+    }
+    return { success: false, error: 'Destinatario no especificado' };
+  }
+
+  @SubscribeMessage('FILE_SEND_RESULT')
+  handleFileSendResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<any>,
+  ) {
+    this.server.emit('FILE_SEND_RESULT', envelope?.payload || envelope);
+  }
+
+  @SubscribeMessage('TEACHER_COLLECT_FILE')
+  async handleTeacherCollectFile(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string; filePath: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
+
+    const socketId = this.deviceToAgentSocket.get(body.deviceId);
+    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+
+    const envelope = createEnvelope(
+      PacketType.FILE_COLLECT,
+      'SERVER',
+      'server',
+      {
+        collectId: randomUUID(),
+        deviceId: body.deviceId,
+        filePath: body.filePath,
+      },
+    );
+    this.server.to(socketId).emit(PacketType.FILE_COLLECT, envelope);
+    this.server.to(socketId).emit('FILE_COLLECT', envelope);
+    return { success: true };
+  }
+
+  @SubscribeMessage('FILE_COLLECT_RESULT')
+  handleFileCollectResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<any>,
+  ) {
+    this.server.emit('FILE_COLLECT_RESULT', envelope?.payload || envelope);
+  }
+
+  // -------------------------------------------------------------
+  // PROCESS & APPLICATION MONITORING AND RESTRICTION
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_REQUEST_PROCESSES')
+  async handleTeacherRequestProcesses(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
+
+    const socketId = this.deviceToAgentSocket.get(body.deviceId);
+    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+
+    const envelope = createEnvelope(PacketType.PROCESS_LIST_REQUEST, 'SERVER', 'server', {
+      deviceId: body.deviceId,
+    });
+    this.server.to(socketId).emit(PacketType.PROCESS_LIST_REQUEST, envelope);
+    this.server.to(socketId).emit('PROCESS_LIST_REQUEST', envelope);
+    return { success: true };
+  }
+
+  @SubscribeMessage('PROCESS_LIST_RESULT')
+  handleProcessListResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<any>,
+  ) {
+    this.server.emit('PROCESS_LIST_RESULT', envelope?.payload || envelope);
+  }
+
+  @SubscribeMessage('TEACHER_KILL_PROCESS')
+  async handleTeacherKillProcess(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { deviceId: string; pid?: number; processName?: string; bundleId?: string },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
+
+    const socketId = this.deviceToAgentSocket.get(body.deviceId);
+    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+
+    const envelope = createEnvelope(PacketType.KILL_PROCESS, 'SERVER', 'server', {
+      deviceId: body.deviceId,
+      pid: body.pid,
+      processName: body.processName,
+      bundleId: body.bundleId,
+    });
+    this.server.to(socketId).emit(PacketType.KILL_PROCESS, envelope);
+    this.server.to(socketId).emit('KILL_PROCESS', envelope);
+    return { success: true };
+  }
+
+  @SubscribeMessage('KILL_PROCESS_RESULT')
+  handleKillProcessResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() envelope: ProtocolEnvelope<any>,
+  ) {
+    this.server.emit('KILL_PROCESS_RESULT', envelope?.payload || envelope);
+  }
+
+  // -------------------------------------------------------------
+  // INTERACTIVE REMOTE CONTROL (MOUSE & KEYBOARD INJECTION)
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_REMOTE_INPUT')
+  handleTeacherRemoteInput(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      deviceId: string;
+      type: string;
+      x?: number;
+      y?: number;
+      button?: string;
+      keyCode?: number;
+      keyText?: string;
+    },
+  ) {
+    const teacherSession = this.connectedTeachers.get(client.id);
+    if (!teacherSession) return;
+
+    const socketId = this.deviceToAgentSocket.get(body.deviceId);
+    if (!socketId) return;
+
+    const envelope = createEnvelope(PacketType.REMOTE_INPUT_EVENT, 'SERVER', 'server', body);
+    this.server.to(socketId).emit(PacketType.REMOTE_INPUT_EVENT, envelope);
+    this.server.to(socketId).emit('REMOTE_INPUT_EVENT', envelope);
+  }
+
   private checkStaleConnections() {
     const now = Date.now();
     const TIMEOUT_MS = 35000;

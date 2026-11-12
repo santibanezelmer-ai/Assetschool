@@ -56,6 +56,25 @@ export enum PacketType {
   // Classroom Session binding
   SESSION_JOIN_NOTICE = 'SESSION_JOIN_NOTICE',
   SESSION_LEAVE_NOTICE = 'SESSION_LEAVE_NOTICE',
+
+  // File Transfer & Work Collection (NetSupport parity)
+  FILE_LIST_DIR = 'FILE_LIST_DIR',
+  FILE_LIST_DIR_RESULT = 'FILE_LIST_DIR_RESULT',
+  FILE_SEND = 'FILE_SEND',
+  FILE_SEND_RESULT = 'FILE_SEND_RESULT',
+  FILE_COLLECT = 'FILE_COLLECT',
+  FILE_COLLECT_RESULT = 'FILE_COLLECT_RESULT',
+
+  // Process & Application Control
+  PROCESS_LIST_REQUEST = 'PROCESS_LIST_REQUEST',
+  PROCESS_LIST_RESULT = 'PROCESS_LIST_RESULT',
+  KILL_PROCESS = 'KILL_PROCESS',
+  KILL_PROCESS_RESULT = 'KILL_PROCESS_RESULT',
+
+  // Interactive Remote Control (Mouse & Keyboard Injection)
+  REMOTE_CONTROL_START = 'REMOTE_CONTROL_START',
+  REMOTE_CONTROL_STOP = 'REMOTE_CONTROL_STOP',
+  REMOTE_INPUT_EVENT = 'REMOTE_INPUT_EVENT',
 }
 
 export interface SecuritySignature {
@@ -290,6 +309,111 @@ export interface ScreenStreamStatsPayload {
   roundTripTimeMs: number;
   resolution: string;
   timestamp: number;
+}
+
+// File Transfer Payloads
+export interface FileItemDto {
+  name: string;
+  path: string;
+  size: number;
+  isDirectory: boolean;
+  modifiedAt: number;
+  extension?: string;
+}
+
+export interface FileListDirPayload {
+  requestId: string;
+  deviceId: string;
+  dirPath?: string;
+}
+
+export interface FileListDirResultPayload {
+  requestId: string;
+  deviceId: string;
+  currentPath: string;
+  parentPath?: string;
+  items: FileItemDto[];
+  error?: string;
+}
+
+export interface FileSendPayload {
+  transferId: string;
+  fileName: string;
+  fileSizeBytes: number;
+  targetDir?: string;
+  fileContentBase64: string;
+  broadcastToAll?: boolean;
+}
+
+export interface FileSendResultPayload {
+  transferId: string;
+  deviceId: string;
+  success: boolean;
+  savedPath?: string;
+  error?: string;
+}
+
+export interface FileCollectPayload {
+  collectId: string;
+  filePath: string;
+  deviceId: string;
+}
+
+export interface FileCollectResultPayload {
+  collectId: string;
+  deviceId: string;
+  fileName: string;
+  fileSizeBytes: number;
+  fileContentBase64?: string;
+  success: boolean;
+  error?: string;
+}
+
+// Process & App Control Payloads
+export interface RunningProcessDto {
+  pid: number;
+  name: string;
+  bundleId?: string;
+  cpuPercent?: number;
+  memoryMb?: number;
+  isFrontmost?: boolean;
+}
+
+export interface ProcessListResultPayload {
+  deviceId: string;
+  processes: RunningProcessDto[];
+}
+
+export interface KillProcessPayload {
+  deviceId: string;
+  pid?: number;
+  processName?: string;
+  bundleId?: string;
+}
+
+export interface KillProcessResultPayload {
+  deviceId: string;
+  success: boolean;
+  pid?: number;
+  processName?: string;
+  error?: string;
+}
+
+// Interactive Remote Input Payloads
+export interface RemoteInputEventPayload {
+  deviceId: string;
+  type: 'mouseMove' | 'mouseDown' | 'mouseUp' | 'click' | 'doubleClick' | 'keyDown' | 'keyUp';
+  x?: number; // Normalized 0.0 - 1.0 (relative to display)
+  y?: number; // Normalized 0.0 - 1.0
+  button?: 'left' | 'right' | 'middle';
+  keyCode?: number;
+  keyText?: string;
+  modifiers?: {
+    shift?: boolean;
+    ctrl?: boolean;
+    alt?: boolean;
+    meta?: boolean;
+  };
 }
 
 export function createEnvelope<T>(

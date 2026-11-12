@@ -192,6 +192,33 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
 
         case "COMMAND_DISPATCH", "command:dispatch":
             handleCommandDispatch(envelope: envelope, payload: payload)
+
+        // -------------------------------------------------------------
+        // FILE TRANSFER & WORK COLLECTION
+        // -------------------------------------------------------------
+        case "FILE_LIST_DIR":
+            handleFileListDir(payload: payload)
+
+        case "FILE_SEND":
+            handleFileSend(payload: payload)
+
+        case "FILE_COLLECT":
+            handleFileCollect(payload: payload)
+
+        // -------------------------------------------------------------
+        // PROCESS & APPLICATION CONTROL
+        // -------------------------------------------------------------
+        case "PROCESS_LIST_REQUEST":
+            handleProcessListRequest(payload: payload)
+
+        case "KILL_PROCESS":
+            handleKillProcess(payload: payload)
+
+        // -------------------------------------------------------------
+        // INTERACTIVE REMOTE CONTROL
+        // -------------------------------------------------------------
+        case "REMOTE_INPUT_EVENT":
+            handleRemoteInputEvent(payload: payload)
             
         default:
             break
@@ -282,11 +309,199 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         case "UNLOCK_SCREEN":
             LockCurtainManager.shared.hide()
             sendCommandResult(commandId: commandId, success: true)
+
+        case "KILL_PROCESS":
+            let pidVal = params?["pid"] as? Int
+            let nameVal = params?["name"] as? String
+            let bundleVal = params?["bundleId"] as? String
+            let pid = pidVal != nil ? pid_t(pidVal!) : nil
+            let res = ProcessManagerService.shared.terminateApplication(pid: pid, bundleId: bundleVal, name: nameVal)
+            sendCommandResult(commandId: commandId, success: res.success, error: res.error)
+
+        case "TRANSFER_FILE":
+            guard let fileName = params?["fileName"] as? String,
+                  let content = params?["fileContentBase64"] as? String else {
+                sendCommandResult(commandId: commandId, success: false, error: "Parámetros incompletos para TRANSFER_FILE")
+                return
+            }
+            let targetDir = params?["targetDir"] as? String
+            let res = FileManagerService.shared.saveIncomingFile(fileName: fileName, base64Content: content, targetDir: targetDir)
+            sendCommandResult(commandId: commandId, success: res.success, error: res.error)
+
+        case "COLLECT_FILE":
+            guard let filePath = params?["filePath"] as? String else {
+                sendCommandResult(commandId: commandId, success: false, error: "Ruta de archivo no especificada")
+                return
+            }
+            let res = FileManagerService.shared.readFileToCollect(path: filePath)
+            sendCommandResult(commandId: commandId, success: res.success, error: res.error)
             
         default:
             print("[GATEWAY CLIENT AVISO] Tipo de comando no manejado por este agente: \(commandType)")
             sendCommandResult(commandId: commandId, success: false, error: "Comando no soportado")
         }
+    }
+
+    // MARK: - File Transfer Handlers
+    private func handleFileListDir(payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let requestId = (payload["requestId"] as? String) ?? UUID().uuidString
+        let dirPath = payload["dirPath"] as? String
+
+        let result = FileManagerService.shared.listDirectory(path: dirPath)
+        var responsePayload: [String: Any] = [
+            "requestId": requestId,
+            "deviceId": self.deviceId,
+            "currentPath": result.currentPath,
+            "items": result.items
+        ]
+        if let parent = result.parentPath {
+            responsePayload["parentPath"] = parent
+        }
+        if let err = result.error {
+            responsePayload["error"] = err
+        }
+
+        let envelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "FILE_LIST_DIR_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": responsePayload
+        ]
+        sendEvent(name: "FILE_LIST_DIR_RESULT", payload: envelope)
+    }
+
+    private func handleFileSend(payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let transferId = (payload["transferId"] as? String) ?? UUID().uuidString
+        let fileName = (payload["fileName"] as? String) ?? "archivo_recibido.dat"
+        let base64Content = (payload["fileContentBase64"] as? String) ?? ""
+        let targetDir = payload["targetDir"] as? String
+
+        let result = FileManagerService.shared.saveIncomingFile(fileName: fileName, base64Content: base64Content, targetDir: targetDir)
+
+        var responsePayload: [String: Any] = [
+            "transferId": transferId,
+            "deviceId": self.deviceId,
+            "success": result.success
+        ]
+        if let path = result.savedPath {
+            responsePayload["savedPath"] = path
+        }
+        if let err = result.error {
+            responsePayload["error"] = err
+        }
+
+        let envelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "FILE_SEND_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": responsePayload
+        ]
+        sendEvent(name: "FILE_SEND_RESULT", payload: envelope)
+    }
+
+    private func handleFileCollect(payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let collectId = (payload["collectId"] as? String) ?? UUID().uuidString
+        let filePath = (payload["filePath"] as? String) ?? ""
+
+        let result = FileManagerService.shared.readFileToCollect(path: filePath)
+
+        var responsePayload: [String: Any] = [
+            "collectId": collectId,
+            "deviceId": self.deviceId,
+            "fileName": result.fileName,
+            "fileSizeBytes": result.size,
+            "success": result.success
+        ]
+        if let content = result.base64Content {
+            responsePayload["fileContentBase64"] = content
+        }
+        if let err = result.error {
+            responsePayload["error"] = err
+        }
+
+        let envelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "FILE_COLLECT_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": responsePayload
+        ]
+        sendEvent(name: "FILE_COLLECT_RESULT", payload: envelope)
+    }
+
+    // MARK: - Process Management Handlers
+    private func handleProcessListRequest(payload: [String: Any]?) {
+        let processes = ProcessManagerService.shared.getRunningApplications()
+
+        let envelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "PROCESS_LIST_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": [
+                "deviceId": self.deviceId,
+                "processes": processes
+            ]
+        ]
+        sendEvent(name: "PROCESS_LIST_RESULT", payload: envelope)
+    }
+
+    private func handleKillProcess(payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let pidVal = payload["pid"] as? Int
+        let bundleId = payload["bundleId"] as? String
+        let processName = payload["processName"] as? String
+        let pid = pidVal != nil ? pid_t(pidVal!) : nil
+
+        let result = ProcessManagerService.shared.terminateApplication(pid: pid, bundleId: bundleId, name: processName)
+
+        var responsePayload: [String: Any] = [
+            "deviceId": self.deviceId,
+            "success": result.success
+        ]
+        if let p = pid { responsePayload["pid"] = Int(p) }
+        if let n = processName { responsePayload["processName"] = n }
+        if let err = result.error { responsePayload["error"] = err }
+
+        let envelope: [String: Any] = [
+            "packetId": UUID().uuidString,
+            "packetType": "KILL_PROCESS_RESULT",
+            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+            "senderId": self.deviceId,
+            "target": "server",
+            "payload": responsePayload
+        ]
+        sendEvent(name: "KILL_PROCESS_RESULT", payload: envelope)
+    }
+
+    // MARK: - Interactive Remote Input Handler
+    private func handleRemoteInputEvent(payload: [String: Any]?) {
+        guard let payload = payload else { return }
+        let type = (payload["type"] as? String) ?? "mouseMove"
+        let x = payload["x"] as? Double
+        let y = payload["y"] as? Double
+        let button = payload["button"] as? String
+        let keyCodeVal = payload["keyCode"] as? Int
+        let keyCode = keyCodeVal != nil ? UInt16(keyCodeVal!) : nil
+        let keyText = payload["keyText"] as? String
+
+        RemoteInputService.shared.handleRemoteInput(
+            type: type,
+            x: x,
+            y: y,
+            button: button,
+            keyCode: keyCode,
+            keyText: keyText
+        )
     }
     
     private func sendCommandResult(commandId: String, success: Bool, error: String? = nil) {

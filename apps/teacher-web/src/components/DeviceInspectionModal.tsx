@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { X, Play, Square, RefreshCw, Activity, ShieldAlert, Cpu, Network, Lock, Unlock } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { X, Play, Square, RefreshCw, Activity, ShieldAlert, Cpu, Network, Lock, Unlock, MousePointer } from 'lucide-react';
 import { MonitorDevice, ActiveStreamState } from '../hooks/useWebRtcMonitor';
 
 interface DeviceInspectionModalProps {
@@ -10,6 +10,7 @@ interface DeviceInspectionModalProps {
   onStopStream: (deviceId: string) => void;
   onLockDevice?: (deviceId: string) => void;
   onUnlockDevice?: (deviceId: string) => void;
+  onRemoteInput?: (deviceId: string, event: any) => void;
 }
 
 export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
@@ -20,11 +21,13 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
   onStopStream,
   onLockDevice,
   onUnlockDevice,
+  onRemoteInput,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const isStreaming = streamState?.status === 'streaming';
   const isConnecting = streamState?.status === 'connecting' || streamState?.status === 'requesting';
   const isLocked = device?.status === 'locked';
+  const [isRemoteControlActive, setIsRemoteControlActive] = useState(false);
 
   useEffect(() => {
     if (videoRef.current && streamState?.mediaStream) {
@@ -34,6 +37,21 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
   }, [streamState?.mediaStream]);
 
   if (!device) return null;
+
+  const handlePointerEvent = (type: string, e: React.MouseEvent<HTMLVideoElement>) => {
+    if (!isRemoteControlActive || !onRemoteInput || !videoRef.current) return;
+    const rect = videoRef.current.getBoundingClientRect();
+    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const button = e.button === 2 ? 'right' : 'left';
+
+    onRemoteInput(device.id, {
+      type,
+      x,
+      y,
+      button,
+    });
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-150">
@@ -61,6 +79,22 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
+            {/* Remote Control Toggle (NetSupport Remote Control parity) */}
+            {isStreaming && (
+              <button
+                onClick={() => setIsRemoteControlActive(!isRemoteControlActive)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-all ${
+                  isRemoteControlActive
+                    ? 'bg-amber-500 hover:bg-amber-600 text-slate-950 font-bold ring-2 ring-amber-400'
+                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200'
+                }`}
+                title="Tomar el control del ratón y teclado de este alumno en tiempo real"
+              >
+                <MousePointer className="w-3.5 h-3.5" />
+                {isRemoteControlActive ? 'Soltar Control' : 'Tomar Control'}
+              </button>
+            )}
+
             {/* Lock / Unlock Screen button */}
             {!device.isRevoked && device.status !== 'offline' && (
               isLocked ? (
@@ -84,7 +118,10 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
 
             {isStreaming ? (
               <button
-                onClick={() => onStopStream(device.id)}
+                onClick={() => {
+                  setIsRemoteControlActive(false);
+                  onStopStream(device.id);
+                }}
                 className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-semibold text-xs flex items-center gap-1.5 shadow-sm transition-all"
               >
                 <Square className="w-3.5 h-3.5 fill-current" />
@@ -126,8 +163,23 @@ export const DeviceInspectionModal: React.FC<DeviceInspectionModalProps> = ({
             autoPlay
             playsInline
             muted
-            className={`w-full h-full object-contain max-h-[65vh] ${isStreaming ? 'block' : 'hidden'}`}
+            onMouseMove={(e) => handlePointerEvent('mouseMove', e)}
+            onMouseDown={(e) => handlePointerEvent('mouseDown', e)}
+            onMouseUp={(e) => handlePointerEvent('mouseUp', e)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              handlePointerEvent('click', e);
+            }}
+            className={`w-full h-full object-contain max-h-[65vh] ${isStreaming ? 'block' : 'hidden'} ${isRemoteControlActive ? 'cursor-crosshair' : 'cursor-default'}`}
           />
+
+          {/* Remote Control Active Indicator */}
+          {isRemoteControlActive && (
+            <div className="absolute top-4 left-4 bg-amber-500/90 text-slate-950 font-bold text-xs px-3 py-1.5 rounded-lg shadow-lg flex items-center gap-2 backdrop-blur-sm animate-pulse pointer-events-none">
+              <MousePointer className="w-4 h-4" />
+              <span>Control Remoto Activo — Haz clic para interactuar en la máquina del alumno</span>
+            </div>
+          )}
 
           {!isStreaming && (
             <div className="flex flex-col items-center justify-center p-8 text-center text-slate-400">
