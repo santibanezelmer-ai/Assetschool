@@ -11,16 +11,20 @@ import {
   WebRtcIceCandidatePayload,
 } from '@assetschool/protocol';
 import { DevicePlatform, SystemRole } from '@assetschool/shared-types';
+import { createTestJwtService, signTeacherToken } from '../../test/gateway-test-helpers';
 
 describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)', () => {
   let gateway: AgentGateway;
   let dbService: DatabaseService;
+  // R0 / S9: real JwtService and real signed access tokens (no fallback identity).
+  const jwtService = createTestJwtService();
+  const teacherToken = () => signTeacherToken(jwtService);
 
   beforeEach(async () => {
     process.env.DATABASE_MODE = 'memory_test_only';
     dbService = new DatabaseService();
     await dbService.onModuleInit();
-    gateway = new AgentGateway(dbService);
+    gateway = new AgentGateway(dbService, jwtService);
   });
 
   afterEach(async () => {
@@ -70,8 +74,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     // 2. Authenticate teacher socket
     const teacherSocket = createMockSocket('teacher_sock');
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'valid_mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     const startEnvelope = createEnvelope(
@@ -104,8 +108,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
 
     const teacherSocket = createMockSocket('teacher_inst_a');
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'valid_mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     const startEnvelope = createEnvelope(
@@ -159,8 +163,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
 
     // 3. Connect teacher
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     // 4. Teacher starts screen capture
@@ -338,8 +342,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     );
 
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     const sessionId = 'stream_revocation_test';
@@ -395,8 +399,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     );
 
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     const sessionId = 'stream_disconnect_test';
@@ -472,8 +476,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     );
 
     await gateway.handleTeacherJoin(teacherSocket, {
-      token: 'mock_token',
-      classroomId: '11111111-1111-1111-1111-111111111111',
+      token: teacherToken(),
+      classroomId: 'd1111111-1111-1111-1111-111111111111',
     });
 
     // Start 1st stream

@@ -33,6 +33,10 @@ import {
 import { DatabaseService } from '../database/database.service';
 import { DeviceStatus, SystemRole, CommandType, CommandStatus } from '@assetschool/shared-types';
 import { randomBytes, randomUUID } from 'crypto';
+import { hasPermission, PermissionKey } from '@assetschool/permissions';
+import { assertAccessToken } from '../auth/token-policy';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 interface AuthenticatedAgentSession {
   socketId: string;
@@ -177,28 +181,35 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return { success: false, error: 'Token JWT de autenticación requerido' };
     }
 
+    // R0 / S9: there is no fallback identity. Without a JwtService the gateway
+    // cannot verify tokens and every teacher connection is rejected.
+    if (!this.jwtService) {
+      this.logger.error('JwtService no disponible en el gateway: conexión de docente rechazada');
+      return { success: false, error: 'Servicio de autenticación no disponible' };
+    }
+
     let decoded: any;
     try {
-      if (this.jwtService) {
-        decoded = this.jwtService.verify(token);
-      } else {
-        // Fallback for isolated unit tests if jwtService wasn't provided
-        decoded = {
-          sub: 'cccccccc-cccc-cccc-cccc-cccccccccccc',
-          email: 'profesor@assetschool.lan',
-          role: SystemRole.TEACHER,
-          institutionId: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-        };
-      }
+      decoded = this.jwtService.verify(token);
+      // R0 / S7b: only access tokens are accepted (not refresh tokens).
+      assertAccessToken(decoded);
     } catch (err: any) {
       this.logger.warn(`Intento de conexión de docente con token inválido: ${err?.message}`);
       return { success: false, error: 'Token JWT inválido o expirado' };
     }
 
-    const userId = decoded.sub || decoded.id;
+    if (decoded.mustChangePassword) {
+      return { success: false, error: 'Debe cambiar su contraseña antes de supervisar el aula (PASSWORD_CHANGE_REQUIRED)' };
+    }
+
+    const userId = decoded.sub;
     const role = decoded.role;
     const normalizedRole = typeof role === 'string' ? role.toUpperCase() : role;
-    const institutionId = decoded.institutionId || decoded.institution_id;
+    const institutionId = decoded.institutionId;
+
+    if (!userId || !institutionId) {
+      return { success: false, error: 'Token sin identidad institucional' };
+    }
 
     if (
       normalizedRole !== SystemRole.TEACHER &&
@@ -208,11 +219,23 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return { success: false, error: 'Permisos insuficientes para supervisión de aula' };
     }
 
+    // R0 / S1: the classroom must exist and belong to the teacher's institution.
+    if (body.classroomId) {
+      const classroomCheck = await this.validateClassroomForInstitution(
+        body.classroomId,
+        institutionId,
+        normalizedRole,
+      );
+      if (!classroomCheck.ok) {
+        return { success: false, error: classroomCheck.error };
+      }
+    }
+
     const teacherSession: AuthenticatedTeacherSession = {
       socketId: client.id,
       userId,
-      email: decoded.email,
-      role,
+      email: decoded.email || '',
+      role: normalizedRole,
       institutionId,
       classroomId: body.classroomId,
       authenticatedAt: Date.now(),
@@ -1335,6 +1358,38 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const envelope = createEnvelope(PacketType.REMOTE_INPUT_EVENT, 'SERVER', 'server', body);
     this.server.to(socketId).emit(PacketType.REMOTE_INPUT_EVENT, envelope);
     this.server.to(socketId).emit('REMOTE_INPUT_EVENT', envelope);
+  }
+
+  // -------------------------------------------------------------
+  // R0 AUTHORIZATION & ISOLATION HELPERS
+  // -------------------------------------------------------------
+  private isSuperAdmin(role?: string): boolean {
+    return typeof role === 'string' && role.toUpperCase() === SystemRole.SUPERADMIN;
+  }
+
+  /** Validates that a classroom exists and belongs to the institution (fails closed). */
+  private async validateClassroomForInstitution(
+    classroomId: string,
+    institutionId: string,
+    role?: string,
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    if (typeof classroomId !== 'string' || !UUID_PATTERN.test(classroomId)) {
+      return { ok: false, error: 'Identificador de aula inválido' };
+    }
+    if (!this.databaseService.isDatabaseReady) {
+      return { ok: false, error: 'Base de datos no disponible: no se puede validar el aula' };
+    }
+    const res = await this.databaseService.query(
+      'SELECT id, institution_id FROM classrooms WHERE id = $1',
+      [classroomId],
+    );
+    if (res.rows.length === 0) {
+      return { ok: false, error: 'Aula no encontrada' };
+    }
+    if (res.rows[0].institution_id !== institutionId && !this.isSuperAdmin(role)) {
+      return { ok: false, error: 'Violación de aislamiento institucional: el aula pertenece a otra institución' };
+    }
+    return { ok: true };
   }
 
   private checkStaleConnections() {
