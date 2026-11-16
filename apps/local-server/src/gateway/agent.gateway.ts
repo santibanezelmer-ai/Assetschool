@@ -1122,6 +1122,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     );
 
     await this.setDeviceStatus(device.id, device.institutionId, DeviceStatus.LOCKED);
+    await this.auditTeacherAction(client, teacher, device.institutionId, 'DEVICE_LOCK', 'DEVICE', device.id, {
+      delivered: sent,
+    });
     return { success: sent };
   }
 
@@ -1144,6 +1147,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     );
 
     await this.setDeviceStatus(device.id, device.institutionId, DeviceStatus.ONLINE);
+    await this.auditTeacherAction(client, teacher, device.institutionId, 'DEVICE_UNLOCK', 'DEVICE', device.id, {
+      delivered: sent,
+    });
     return { success: sent };
   }
 
@@ -1173,6 +1179,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       count++;
     }
 
+    await this.auditTeacherAction(
+      client,
+      teacher,
+      teacher.institutionId,
+      'CLASSROOM_LOCK',
+      'CLASSROOM',
+      body?.classroomId || null,
+      { scope: body?.classroomId ? 'classroom' : 'institution', count, deviceIds: targets.map((t) => t.deviceId) },
+    );
     return { success: true, count };
   }
 
@@ -1199,6 +1214,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       count++;
     }
 
+    await this.auditTeacherAction(
+      client,
+      teacher,
+      teacher.institutionId,
+      'CLASSROOM_UNLOCK',
+      'CLASSROOM',
+      body?.classroomId || null,
+      { scope: body?.classroomId ? 'classroom' : 'institution', count, deviceIds: targets.map((t) => t.deviceId) },
+    );
     return { success: true, count };
   }
 
@@ -1307,6 +1331,14 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         this.emitToSocket(target.socketId, 'FILE_SEND', envelope);
         count++;
       }
+      await this.auditTeacherAction(client, scope.teacher, scope.teacher.institutionId, 'FILE_SEND', 'CLASSROOM', body.classroomId || null, {
+        transferId,
+        fileName: body.fileName,
+        fileSizeBytes: body.fileSizeBytes,
+        broadcast: true,
+        count,
+        deviceIds: scope.targets.map((t) => t.deviceId),
+      });
       return { success: true, count, broadcast: true };
     } else if (body?.deviceId) {
       const auth = await this.authorizeDeviceAction(client, body.deviceId, PermissionKey.DEVICE_FILE_TRANSFER);
@@ -1314,6 +1346,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.registerPendingRequest('FILE_SEND_RESULT', transferId, auth.device.id, auth.agentSocketId!, client.id, TRANSFER_REQUEST_TTL_MS);
       this.emitToSocket(auth.agentSocketId!, PacketType.FILE_SEND, envelope);
       this.emitToSocket(auth.agentSocketId!, 'FILE_SEND', envelope);
+      await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'FILE_SEND', 'DEVICE', auth.device.id, {
+        transferId,
+        fileName: body.fileName,
+        fileSizeBytes: body.fileSizeBytes,
+        broadcast: false,
+      });
       return { success: true, broadcast: false };
     }
     return { success: false, error: 'Destinatario no especificado' };
@@ -1350,6 +1388,10 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.registerPendingRequest('FILE_COLLECT_RESULT', collectId, auth.device.id, socketId, client.id, TRANSFER_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.FILE_COLLECT, envelope);
     this.emitToSocket(socketId, 'FILE_COLLECT', envelope);
+    await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'FILE_COLLECT', 'DEVICE', auth.device.id, {
+      collectId,
+      filePath: body.filePath,
+    });
     return { success: true };
   }
 
@@ -1408,6 +1450,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.registerPendingRequest('KILL_PROCESS_RESULT', undefined, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.KILL_PROCESS, envelope);
     this.emitToSocket(socketId, 'KILL_PROCESS', envelope);
+    await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'PROCESS_KILL', 'DEVICE', auth.device.id, {
+      pid: body.pid,
+      processName: body.processName,
+      bundleId: body.bundleId,
+    });
     return { success: true };
   }
 
@@ -1519,14 +1566,98 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
   }
 
-  /** Hook for auditing (R0 / S10). */
+  /** R0 / S10: remote control start is audited (not every keystroke). */
   private onRemoteControlStarted(session: RemoteControlSession) {
     this.logger.log(`Control remoto iniciado: ${session.email} -> ${session.deviceId}`);
+    void this.writeAudit({
+      institutionId: session.institutionId,
+      actorUserId: session.userId,
+      actorRole: session.role,
+      action: 'REMOTE_CONTROL_START',
+      entityType: 'DEVICE',
+      entityId: session.deviceId,
+      ipAddress: session.ipAddress,
+      details: { teacherEmail: session.email },
+    });
   }
 
-  /** Hook for auditing (R0 / S10). */
+  /** R0 / S10: remote control end is audited with duration and input count. */
   private onRemoteControlEnded(session: RemoteControlSession, reason: string) {
     this.logger.log(`Control remoto finalizado: ${session.email} -> ${session.deviceId} (${reason})`);
+    void this.writeAudit({
+      institutionId: session.institutionId,
+      actorUserId: session.userId,
+      actorRole: session.role,
+      action: 'REMOTE_CONTROL_END',
+      entityType: 'DEVICE',
+      entityId: session.deviceId,
+      ipAddress: session.ipAddress,
+      details: { reason, durationMs: Date.now() - session.startedAt, inputCount: session.inputCount },
+    });
+  }
+
+  // -------------------------------------------------------------
+  // R0 / S10 AUDIT HELPERS
+  // -------------------------------------------------------------
+  private async auditTeacherAction(
+    client: Socket,
+    teacher: AuthenticatedTeacherSession,
+    institutionId: string,
+    action: string,
+    entityType: string,
+    entityId: string | null,
+    details: Record<string, unknown>,
+  ) {
+    await this.writeAudit({
+      institutionId,
+      actorUserId: teacher.userId,
+      actorRole: teacher.role,
+      action,
+      entityType,
+      entityId,
+      ipAddress: client.handshake?.address,
+      details: { ...details, teacherEmail: teacher.email },
+    });
+  }
+
+  private async writeAudit(entry: {
+    institutionId: string;
+    actorUserId?: string;
+    actorRole?: string;
+    action: string;
+    entityType: string;
+    entityId: string | null;
+    ipAddress?: string;
+    details: Record<string, unknown>;
+  }): Promise<void> {
+    if (!this.databaseService.isDatabaseReady) {
+      this.logger.warn(`Auditoría no persistida (BD no disponible): ${entry.action} ${entry.entityId ?? ''}`);
+      return;
+    }
+    try {
+      let actorUuid: string | null = null;
+      if (entry.actorUserId && UUID_PATTERN.test(entry.actorUserId)) {
+        const u = await this.databaseService.query('SELECT id FROM users WHERE id = $1', [entry.actorUserId]);
+        if (u.rows.length > 0) actorUuid = entry.actorUserId;
+      }
+      await this.databaseService.query(
+        `INSERT INTO audit_logs (id, institution_id, actor_user_id, actor_role, action, entity_type, entity_id, ip_address, details_json, timestamp)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
+        [
+          randomUUID(),
+          entry.institutionId,
+          actorUuid,
+          entry.actorRole || null,
+          entry.action,
+          entry.entityType,
+          entry.entityId,
+          entry.ipAddress || null,
+          JSON.stringify({ ...entry.details, actorUserId: entry.actorUserId }),
+        ],
+      );
+    } catch (err: any) {
+      this.logger.error(`Error guardando auditoría ${entry.action}: ${err?.message}`);
+    }
   }
 
   // -------------------------------------------------------------
