@@ -61,6 +61,44 @@ interface AuthenticatedTeacherSession {
   activeSessionIds: Set<string>;
 }
 
+interface RemoteControlSession {
+  key: string;
+  teacherSocketId: string;
+  userId: string;
+  role: string;
+  email: string;
+  institutionId: string;
+  deviceId: string;
+  agentSocketId: string;
+  ipAddress?: string;
+  startedAt: number;
+  lastInputAt: number;
+  inputCount: number;
+}
+
+interface AuthorizedDevice {
+  id: string;
+  institutionId: string;
+  hostname: string;
+}
+
+type DeviceAuthorization =
+  | {
+      ok: true;
+      teacher: AuthenticatedTeacherSession;
+      device: AuthorizedDevice;
+      agentSocketId?: string;
+    }
+  | { ok: false; error: string; code: 'UNAUTHENTICATED' | 'FORBIDDEN' | 'NOT_FOUND' | 'REVOKED' | 'TENANT' | 'OFFLINE' | 'UNAVAILABLE' | 'INVALID' };
+
+interface ClassroomTarget {
+  deviceId: string;
+  institutionId: string;
+  socketId: string;
+}
+
+const REMOTE_CONTROL_IDLE_TIMEOUT_MS = 60_000;
+
 interface ActiveStreamSession {
   sessionId: string;
   classroomId?: string;
@@ -88,6 +126,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private connectedTeachers = new Map<string, AuthenticatedTeacherSession>(); // socketId -> TeacherSession
   private userToTeacherSockets = new Map<string, Set<string>>(); // userId -> Set<socketId>
   private activeStreamSessions = new Map<string, ActiveStreamSession>(); // sessionId -> ActiveStreamSession
+  private remoteControlSessions = new Map<string, RemoteControlSession>(); // `${teacherSocket}:${deviceId}`
+  private remoteControlAuthorizations = new Map<string, Promise<RemoteControlSession | null>>();
   private heartbeatIntervalTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -136,6 +176,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const teacherSession = this.connectedTeachers.get(client.id);
     if (teacherSession) {
       this.logger.log(`Docente desconectado: ${teacherSession.email} (User: ${teacherSession.userId})`);
+      this.endRemoteControlSessionsWhere((s) => s.teacherSocketId === client.id, 'Docente desconectado');
       for (const sessionId of teacherSession.activeSessionIds) {
         const stream = this.activeStreamSessions.get(sessionId);
         if (stream) {
@@ -501,6 +542,26 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       });
     }
 
+    // R0 / S1: RBAC permission and fail-closed isolation (no DB => no stream).
+    if (
+      !this.isSuperAdmin(teacherSession.role) &&
+      !hasPermission(teacherSession.role as SystemRole, PermissionKey.DEVICE_MONITOR)
+    ) {
+      return createEnvelope(PacketType.WEBRTC_ERROR, 'SERVER', 'server', {
+        deviceId,
+        code: 'PERMISSION_DENIED',
+        message: "Permiso 'device:monitor' requerido",
+      });
+    }
+    if (!this.databaseService.isDatabaseReady) {
+      return createEnvelope(PacketType.WEBRTC_ERROR, 'SERVER', 'server', {
+        deviceId,
+        code: 'UNAUTHORIZED',
+        message: 'Base de datos no disponible: no se puede verificar el aislamiento institucional',
+      });
+    }
+    let deviceInstitutionId = '';
+
     // 2. Validate device status & revocation in DB
     if (this.databaseService.isDatabaseReady) {
       const devRes = await this.databaseService.query(
@@ -534,10 +595,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
           message: 'Violación de aislamiento institucional entre dispositivo y docente',
         });
       }
+      deviceInstitutionId = device.institution_id;
     }
 
-    // 3. Find connected agent socket
-    const agentSocketId = this.deviceToAgentSocket.get(deviceId);
+    // 3. Find connected agent socket (must belong to the device's institution)
+    const agentSocketId = this.connectedAgentSocketFor(deviceId, deviceInstitutionId);
     if (!agentSocketId || !this.server?.sockets?.sockets?.get(agentSocketId)) {
       return createEnvelope(PacketType.WEBRTC_ERROR, 'SERVER', 'server', {
         deviceId,
@@ -941,6 +1003,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   }
 
   public terminateDeviceStreams(deviceId: string, reason: string) {
+    this.endRemoteControlSessionsWhere((s) => s.deviceId === deviceId, reason);
     for (const [sessionId, stream] of this.activeStreamSessions.entries()) {
       if (stream.deviceId === deviceId) {
         this.stopStreamInternal(sessionId, reason);
@@ -978,18 +1041,33 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     );
 
     if (this.databaseService.isDatabaseReady) {
-      const issuer = issuerUserId || 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-      this.databaseService.query(
-        `INSERT INTO commands (id, device_id, issuer_user_id, command_type, status, issued_at, payload_json) 
-         VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
-        [commandId, deviceId, issuer, commandType, 'SENT', JSON.stringify(params)],
-      ).catch((err) => this.logger.warn(`Error guardando comando en DB: ${err.message}`));
+      // R0: commands are never attributed to a fictitious issuer.
+      if (issuerUserId && UUID_PATTERN.test(issuerUserId)) {
+        this.databaseService.query(
+          `INSERT INTO commands (id, device_id, issuer_user_id, command_type, status, issued_at, payload_json)
+           VALUES ($1, $2, $3, $4, $5, NOW(), $6)`,
+          [commandId, deviceId, issuerUserId, commandType, 'SENT', JSON.stringify(params)],
+        ).catch((err) => this.logger.warn(`Error guardando comando en DB: ${err.message}`));
+      } else {
+        this.logger.warn(`Comando ${commandType} sin emisor identificado: no se registra con un emisor ficticio`);
+      }
     }
 
-    this.server.to(socketId).emit(PacketType.COMMAND_DISPATCH, envelope);
-    this.server.to(socketId).emit('COMMAND_DISPATCH', envelope);
+    this.emitToSocket(socketId, PacketType.COMMAND_DISPATCH, envelope);
+    this.emitToSocket(socketId, 'COMMAND_DISPATCH', envelope);
     this.logger.log(`Comando ${commandType} enviado a dispositivo ${deviceId} (Socket: ${socketId})`);
     return true;
+  }
+
+  private async setDeviceStatus(deviceId: string, institutionId: string, status: DeviceStatus) {
+    if (this.databaseService.isDatabaseReady) {
+      await this.databaseService.query(
+        'UPDATE devices SET status = $1 WHERE id = $2 AND institution_id = $3',
+        [status, deviceId, institutionId],
+      ).catch(() => {});
+    }
+    // R0 / S8: status changes are only announced to the device's institution.
+    this.emitToInstitution(institutionId, 'DEVICE_STATUS_CHANGED', { deviceId, status });
   }
 
   @SubscribeMessage('TEACHER_LOCK_DEVICE')
@@ -997,31 +1075,22 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string; message?: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) {
-      return { success: false, error: 'Docente no autenticado' };
-    }
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_LOCK, false);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const { teacher, device } = auth;
 
-    const { deviceId, message } = body;
     const sent = this.sendCommandToDevice(
-      deviceId,
+      device.id,
       CommandType.LOCK_SCREEN,
       {
-        message: message || 'Atención al frente. La clase está en pausa pedagógica.',
-        teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+        message: body.message || 'Atención al frente. La clase está en pausa pedagógica.',
+        teacherName: teacher.email ? teacher.email.split('@')[0] : 'Docente',
         lockInput: true,
       },
-      teacherSession.userId,
+      teacher.userId,
     );
 
-    if (this.databaseService.isDatabaseReady) {
-      await this.databaseService.query(
-        'UPDATE devices SET status = $1 WHERE id = $2',
-        [DeviceStatus.LOCKED, deviceId],
-      ).catch(() => {});
-    }
-
-    this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.LOCKED });
+    await this.setDeviceStatus(device.id, device.institutionId, DeviceStatus.LOCKED);
     return { success: sent };
   }
 
@@ -1030,29 +1099,20 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) {
-      return { success: false, error: 'Docente no autenticado' };
-    }
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_LOCK, false);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const { teacher, device } = auth;
 
-    const { deviceId } = body;
     const sent = this.sendCommandToDevice(
-      deviceId,
+      device.id,
       CommandType.UNLOCK_SCREEN,
       {
-        teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+        teacherName: teacher.email ? teacher.email.split('@')[0] : 'Docente',
       },
-      teacherSession.userId,
+      teacher.userId,
     );
 
-    if (this.databaseService.isDatabaseReady) {
-      await this.databaseService.query(
-        'UPDATE devices SET status = $1 WHERE id = $2',
-        [DeviceStatus.ONLINE, deviceId],
-      ).catch(() => {});
-    }
-
-    this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.ONLINE });
+    await this.setDeviceStatus(device.id, device.institutionId, DeviceStatus.ONLINE);
     return { success: sent };
   }
 
@@ -1061,32 +1121,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { classroomId?: string; message?: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) {
-      return { success: false, error: 'Docente no autenticado' };
-    }
+    const scope = await this.resolveClassroomTargets(client, body?.classroomId, PermissionKey.DEVICE_LOCK);
+    if (!scope.ok) return { success: false, error: scope.error };
+    const { teacher, targets } = scope;
 
     const message = body?.message || 'Atención al frente. La clase está en pausa pedagógica.';
     let count = 0;
-
-    for (const [deviceId, socketId] of this.deviceToAgentSocket.entries()) {
+    for (const target of targets) {
       this.sendCommandToDevice(
-        deviceId,
+        target.deviceId,
         CommandType.LOCK_SCREEN,
         {
           message,
-          teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+          teacherName: teacher.email ? teacher.email.split('@')[0] : 'Docente',
           lockInput: true,
         },
-        teacherSession.userId,
+        teacher.userId,
       );
-      if (this.databaseService.isDatabaseReady) {
-        await this.databaseService.query(
-          'UPDATE devices SET status = $1 WHERE id = $2',
-          [DeviceStatus.LOCKED, deviceId],
-        ).catch(() => {});
-      }
-      this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.LOCKED });
+      await this.setDeviceStatus(target.deviceId, target.institutionId, DeviceStatus.LOCKED);
       count++;
     }
 
@@ -1098,28 +1150,21 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { classroomId?: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) {
-      return { success: false, error: 'Docente no autenticado' };
-    }
+    const scope = await this.resolveClassroomTargets(client, body?.classroomId, PermissionKey.DEVICE_LOCK);
+    if (!scope.ok) return { success: false, error: scope.error };
+    const { teacher, targets } = scope;
 
     let count = 0;
-    for (const [deviceId, socketId] of this.deviceToAgentSocket.entries()) {
+    for (const target of targets) {
       this.sendCommandToDevice(
-        deviceId,
+        target.deviceId,
         CommandType.UNLOCK_SCREEN,
         {
-          teacherName: teacherSession.email ? teacherSession.email.split('@')[0] : 'Docente',
+          teacherName: teacher.email ? teacher.email.split('@')[0] : 'Docente',
         },
-        teacherSession.userId,
+        teacher.userId,
       );
-      if (this.databaseService.isDatabaseReady) {
-        await this.databaseService.query(
-          'UPDATE devices SET status = $1 WHERE id = $2',
-          [DeviceStatus.ONLINE, deviceId],
-        ).catch(() => {});
-      }
-      this.server.emit('DEVICE_STATUS_CHANGED', { deviceId, status: DeviceStatus.ONLINE });
+      await this.setDeviceStatus(target.deviceId, target.institutionId, DeviceStatus.ONLINE);
       count++;
     }
 
@@ -1158,11 +1203,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string; dirPath?: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
-
-    const socketId = this.deviceToAgentSocket.get(body.deviceId);
-    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_FILE_TRANSFER);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const socketId = auth.agentSocketId!;
 
     const envelope = createEnvelope(
       PacketType.FILE_LIST_DIR,
@@ -1170,12 +1213,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       'server',
       {
         requestId: randomUUID(),
-        deviceId: body.deviceId,
+        deviceId: auth.device.id,
         dirPath: body.dirPath,
       },
     );
-    this.server.to(socketId).emit(PacketType.FILE_LIST_DIR, envelope);
-    this.server.to(socketId).emit('FILE_LIST_DIR', envelope);
+    this.emitToSocket(socketId, PacketType.FILE_LIST_DIR, envelope);
+    this.emitToSocket(socketId, 'FILE_LIST_DIR', envelope);
     return { success: true };
   }
 
@@ -1193,39 +1236,41 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @MessageBody() body: {
       deviceId?: string;
       broadcastToAll?: boolean;
+      classroomId?: string;
       fileName: string;
       fileSizeBytes: number;
       fileContentBase64: string;
       targetDir?: string;
     },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
-
     const transferId = randomUUID();
     const payload = {
       transferId,
-      fileName: body.fileName,
-      fileSizeBytes: body.fileSizeBytes,
-      fileContentBase64: body.fileContentBase64,
-      targetDir: body.targetDir,
+      fileName: body?.fileName,
+      fileSizeBytes: body?.fileSizeBytes,
+      fileContentBase64: body?.fileContentBase64,
+      targetDir: body?.targetDir,
     };
 
     const envelope = createEnvelope(PacketType.FILE_SEND, 'SERVER', 'server', payload);
 
-    if (body.broadcastToAll) {
+    if (body?.broadcastToAll) {
+      // R0 / S3: "send to all" is scoped to the teacher's institution and,
+      // when given, to the classroom (never to every connected agent).
+      const scope = await this.resolveClassroomTargets(client, body.classroomId, PermissionKey.DEVICE_FILE_TRANSFER);
+      if (!scope.ok) return { success: false, error: scope.error };
       let count = 0;
-      for (const [devId, socketId] of this.deviceToAgentSocket.entries()) {
-        this.server.to(socketId).emit(PacketType.FILE_SEND, envelope);
-        this.server.to(socketId).emit('FILE_SEND', envelope);
+      for (const target of scope.targets) {
+        this.emitToSocket(target.socketId, PacketType.FILE_SEND, envelope);
+        this.emitToSocket(target.socketId, 'FILE_SEND', envelope);
         count++;
       }
       return { success: true, count, broadcast: true };
-    } else if (body.deviceId) {
-      const socketId = this.deviceToAgentSocket.get(body.deviceId);
-      if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
-      this.server.to(socketId).emit(PacketType.FILE_SEND, envelope);
-      this.server.to(socketId).emit('FILE_SEND', envelope);
+    } else if (body?.deviceId) {
+      const auth = await this.authorizeDeviceAction(client, body.deviceId, PermissionKey.DEVICE_FILE_TRANSFER);
+      if (!auth.ok) return { success: false, error: auth.error };
+      this.emitToSocket(auth.agentSocketId!, PacketType.FILE_SEND, envelope);
+      this.emitToSocket(auth.agentSocketId!, 'FILE_SEND', envelope);
       return { success: true, broadcast: false };
     }
     return { success: false, error: 'Destinatario no especificado' };
@@ -1244,11 +1289,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string; filePath: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
-
-    const socketId = this.deviceToAgentSocket.get(body.deviceId);
-    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_FILE_TRANSFER);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const socketId = auth.agentSocketId!;
 
     const envelope = createEnvelope(
       PacketType.FILE_COLLECT,
@@ -1256,12 +1299,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       'server',
       {
         collectId: randomUUID(),
-        deviceId: body.deviceId,
+        deviceId: auth.device.id,
         filePath: body.filePath,
       },
     );
-    this.server.to(socketId).emit(PacketType.FILE_COLLECT, envelope);
-    this.server.to(socketId).emit('FILE_COLLECT', envelope);
+    this.emitToSocket(socketId, PacketType.FILE_COLLECT, envelope);
+    this.emitToSocket(socketId, 'FILE_COLLECT', envelope);
     return { success: true };
   }
 
@@ -1281,17 +1324,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
-
-    const socketId = this.deviceToAgentSocket.get(body.deviceId);
-    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_MONITOR);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const socketId = auth.agentSocketId!;
 
     const envelope = createEnvelope(PacketType.PROCESS_LIST_REQUEST, 'SERVER', 'server', {
-      deviceId: body.deviceId,
+      deviceId: auth.device.id,
     });
-    this.server.to(socketId).emit(PacketType.PROCESS_LIST_REQUEST, envelope);
-    this.server.to(socketId).emit('PROCESS_LIST_REQUEST', envelope);
+    this.emitToSocket(socketId, PacketType.PROCESS_LIST_REQUEST, envelope);
+    this.emitToSocket(socketId, 'PROCESS_LIST_REQUEST', envelope);
     return { success: true };
   }
 
@@ -1308,20 +1349,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() body: { deviceId: string; pid?: number; processName?: string; bundleId?: string },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return { success: false, error: 'Docente no autenticado' };
-
-    const socketId = this.deviceToAgentSocket.get(body.deviceId);
-    if (!socketId) return { success: false, error: 'Dispositivo no conectado' };
+    const auth = await this.authorizeDeviceAction(client, body?.deviceId, PermissionKey.DEVICE_CONTROL);
+    if (!auth.ok) return { success: false, error: auth.error };
+    const socketId = auth.agentSocketId!;
 
     const envelope = createEnvelope(PacketType.KILL_PROCESS, 'SERVER', 'server', {
-      deviceId: body.deviceId,
+      deviceId: auth.device.id,
       pid: body.pid,
       processName: body.processName,
       bundleId: body.bundleId,
     });
-    this.server.to(socketId).emit(PacketType.KILL_PROCESS, envelope);
-    this.server.to(socketId).emit('KILL_PROCESS', envelope);
+    this.emitToSocket(socketId, PacketType.KILL_PROCESS, envelope);
+    this.emitToSocket(socketId, 'KILL_PROCESS', envelope);
     return { success: true };
   }
 
@@ -1337,7 +1376,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   // INTERACTIVE REMOTE CONTROL (MOUSE & KEYBOARD INJECTION)
   // -------------------------------------------------------------
   @SubscribeMessage('TEACHER_REMOTE_INPUT')
-  handleTeacherRemoteInput(
+  async handleTeacherRemoteInput(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: {
       deviceId: string;
@@ -1349,15 +1388,98 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       keyText?: string;
     },
   ) {
-    const teacherSession = this.connectedTeachers.get(client.id);
-    if (!teacherSession) return;
+    // R0 / S1: authorized once per teacher+device control session (cached),
+    // instead of trusting every input event blindly.
+    const session = await this.getOrStartRemoteControlSession(client, body?.deviceId);
+    if (!session) return;
 
-    const socketId = this.deviceToAgentSocket.get(body.deviceId);
-    if (!socketId) return;
+    if (this.deviceToAgentSocket.get(session.deviceId) !== session.agentSocketId) {
+      this.endRemoteControlSession(session.key, 'Agente reconectado o desconectado');
+      return;
+    }
 
-    const envelope = createEnvelope(PacketType.REMOTE_INPUT_EVENT, 'SERVER', 'server', body);
-    this.server.to(socketId).emit(PacketType.REMOTE_INPUT_EVENT, envelope);
-    this.server.to(socketId).emit('REMOTE_INPUT_EVENT', envelope);
+    session.lastInputAt = Date.now();
+    session.inputCount++;
+
+    const envelope = createEnvelope(PacketType.REMOTE_INPUT_EVENT, 'SERVER', 'server', {
+      deviceId: session.deviceId,
+      type: body.type,
+      x: body.x,
+      y: body.y,
+      button: body.button,
+      keyCode: body.keyCode,
+      keyText: body.keyText,
+    });
+    this.emitToSocket(session.agentSocketId, PacketType.REMOTE_INPUT_EVENT, envelope);
+    this.emitToSocket(session.agentSocketId, 'REMOTE_INPUT_EVENT', envelope);
+  }
+
+  private async getOrStartRemoteControlSession(
+    client: Socket,
+    deviceId: string,
+  ): Promise<RemoteControlSession | null> {
+    if (typeof deviceId !== 'string') return null;
+    const key = `${client.id}:${deviceId}`;
+    const existing = this.remoteControlSessions.get(key);
+    if (existing) return existing;
+
+    const inflight = this.remoteControlAuthorizations.get(key);
+    if (inflight) return inflight;
+
+    const promise = (async () => {
+      const auth = await this.authorizeDeviceAction(client, deviceId, PermissionKey.DEVICE_CONTROL);
+      if (!auth.ok) {
+        this.logger.warn(`Control remoto rechazado (${client.id} -> ${deviceId}): ${auth.error}`);
+        return null;
+      }
+      const session: RemoteControlSession = {
+        key,
+        teacherSocketId: client.id,
+        userId: auth.teacher.userId,
+        role: auth.teacher.role,
+        email: auth.teacher.email,
+        institutionId: auth.device.institutionId,
+        deviceId: auth.device.id,
+        agentSocketId: auth.agentSocketId!,
+        ipAddress: client.handshake?.address,
+        startedAt: Date.now(),
+        lastInputAt: Date.now(),
+        inputCount: 0,
+      };
+      this.remoteControlSessions.set(key, session);
+      this.onRemoteControlStarted(session);
+      return session;
+    })();
+
+    this.remoteControlAuthorizations.set(key, promise);
+    try {
+      return await promise;
+    } finally {
+      this.remoteControlAuthorizations.delete(key);
+    }
+  }
+
+  private endRemoteControlSession(key: string, reason: string) {
+    const session = this.remoteControlSessions.get(key);
+    if (!session) return;
+    this.remoteControlSessions.delete(key);
+    this.onRemoteControlEnded(session, reason);
+  }
+
+  private endRemoteControlSessionsWhere(predicate: (s: RemoteControlSession) => boolean, reason: string) {
+    for (const session of Array.from(this.remoteControlSessions.values())) {
+      if (predicate(session)) this.endRemoteControlSession(session.key, reason);
+    }
+  }
+
+  /** Hook for auditing (R0 / S10). */
+  private onRemoteControlStarted(session: RemoteControlSession) {
+    this.logger.log(`Control remoto iniciado: ${session.email} -> ${session.deviceId}`);
+  }
+
+  /** Hook for auditing (R0 / S10). */
+  private onRemoteControlEnded(session: RemoteControlSession, reason: string) {
+    this.logger.log(`Control remoto finalizado: ${session.email} -> ${session.deviceId} (${reason})`);
   }
 
   // -------------------------------------------------------------
@@ -1392,9 +1514,145 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     return { ok: true };
   }
 
+  /** Emits to one socket by id (works with the real server and test doubles). */
+  private emitToSocket(socketId: string, event: string, data: unknown): boolean {
+    const socket = this.server?.sockets?.sockets?.get(socketId);
+    if (!socket) return false;
+    socket.emit(event, data);
+    return true;
+  }
+
+  /** R0 / S8: emits only to teacher consoles of one institution. */
+  private emitToInstitution(institutionId: string, event: string, data: unknown) {
+    for (const teacher of this.connectedTeachers.values()) {
+      if (teacher.institutionId === institutionId) {
+        this.emitToSocket(teacher.socketId, event, data);
+      }
+    }
+  }
+
+  /**
+   * Returns the agent socket for a device only if the connected agent session
+   * belongs to the same institution as the device record.
+   */
+  private connectedAgentSocketFor(deviceId: string, institutionId: string): string | undefined {
+    const socketId = this.deviceToAgentSocket.get(deviceId);
+    if (!socketId) return undefined;
+    const session = this.connectedAgents.get(socketId);
+    if (!session || session.deviceId !== deviceId || session.institutionId !== institutionId) {
+      return undefined;
+    }
+    return socketId;
+  }
+
+  /**
+   * R0 / S1: single authorization point for every teacher action on a device.
+   * Checks teacher session, RBAC permission, device existence, revocation and
+   * institutional isolation. Fails closed when the database is unavailable.
+   */
+  private async authorizeDeviceAction(
+    client: Socket,
+    deviceId: string,
+    permission: PermissionKey,
+    requireConnected = true,
+  ): Promise<DeviceAuthorization> {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) {
+      return { ok: false, code: 'UNAUTHENTICATED', error: 'Docente no autenticado' };
+    }
+    if (!this.isSuperAdmin(teacher.role) && !hasPermission(teacher.role as SystemRole, permission)) {
+      return { ok: false, code: 'FORBIDDEN', error: `Permiso '${permission}' requerido` };
+    }
+    if (typeof deviceId !== 'string' || !UUID_PATTERN.test(deviceId)) {
+      return { ok: false, code: 'INVALID', error: 'Identificador de dispositivo inválido' };
+    }
+    if (!this.databaseService.isDatabaseReady) {
+      return { ok: false, code: 'UNAVAILABLE', error: 'Base de datos no disponible: acción rechazada' };
+    }
+
+    const res = await this.databaseService.query(
+      'SELECT id, institution_id, is_revoked, hostname FROM devices WHERE id = $1',
+      [deviceId],
+    );
+    if (res.rows.length === 0) {
+      return { ok: false, code: 'NOT_FOUND', error: 'Dispositivo no encontrado' };
+    }
+    const row = res.rows[0];
+    if (row.institution_id !== teacher.institutionId && !this.isSuperAdmin(teacher.role)) {
+      this.logger.warn(
+        `Violación de aislamiento bloqueada: ${teacher.email} (${teacher.institutionId}) -> dispositivo ${deviceId} (${row.institution_id})`,
+      );
+      return { ok: false, code: 'TENANT', error: 'Violación de aislamiento institucional' };
+    }
+    if (row.is_revoked) {
+      return { ok: false, code: 'REVOKED', error: 'Dispositivo revocado' };
+    }
+
+    const device: AuthorizedDevice = { id: row.id, institutionId: row.institution_id, hostname: row.hostname };
+    const agentSocketId = this.connectedAgentSocketFor(device.id, device.institutionId);
+    if (requireConnected && !agentSocketId) {
+      return { ok: false, code: 'OFFLINE', error: 'Dispositivo no conectado' };
+    }
+    return { ok: true, teacher, device, agentSocketId };
+  }
+
+  /**
+   * R0 / S3: devices targeted by classroom-wide actions. Always restricted to
+   * the teacher's institution; when a classroom is given it must belong to the
+   * institution and only its devices are targeted.
+   */
+  private async resolveClassroomTargets(
+    client: Socket,
+    classroomId: string | undefined,
+    permission: PermissionKey,
+  ): Promise<
+    | { ok: true; teacher: AuthenticatedTeacherSession; targets: ClassroomTarget[] }
+    | { ok: false; error: string }
+  > {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) return { ok: false, error: 'Docente no autenticado' };
+    if (!this.isSuperAdmin(teacher.role) && !hasPermission(teacher.role as SystemRole, permission)) {
+      return { ok: false, error: `Permiso '${permission}' requerido` };
+    }
+    if (!this.databaseService.isDatabaseReady) {
+      return { ok: false, error: 'Base de datos no disponible: acción rechazada' };
+    }
+
+    let rows: Array<{ id: string; institution_id: string }>;
+    if (classroomId) {
+      const check = await this.validateClassroomForInstitution(classroomId, teacher.institutionId, teacher.role);
+      if (!check.ok) return { ok: false, error: check.error };
+      const res = await this.databaseService.query(
+        'SELECT id, institution_id FROM devices WHERE current_classroom_id = $1 AND is_revoked = false',
+        [classroomId],
+      );
+      rows = res.rows;
+    } else {
+      const res = await this.databaseService.query(
+        'SELECT id, institution_id FROM devices WHERE institution_id = $1 AND is_revoked = false',
+        [teacher.institutionId],
+      );
+      rows = res.rows;
+    }
+
+    const targets: ClassroomTarget[] = [];
+    for (const row of rows) {
+      if (row.institution_id !== teacher.institutionId && !this.isSuperAdmin(teacher.role)) continue;
+      const socketId = this.connectedAgentSocketFor(row.id, row.institution_id);
+      if (socketId) targets.push({ deviceId: row.id, institutionId: row.institution_id, socketId });
+    }
+    return { ok: true, teacher, targets };
+  }
+
   private checkStaleConnections() {
     const now = Date.now();
     const TIMEOUT_MS = 35000;
+
+    for (const session of Array.from(this.remoteControlSessions.values())) {
+      if (now - session.lastInputAt > REMOTE_CONTROL_IDLE_TIMEOUT_MS) {
+        this.endRemoteControlSession(session.key, 'Inactividad');
+      }
+    }
 
     for (const [socketId, session] of this.connectedAgents.entries()) {
       if (now - session.lastHeartbeatAt > TIMEOUT_MS) {
