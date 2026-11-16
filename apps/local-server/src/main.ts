@@ -1,9 +1,28 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
+import * as path from 'path';
+import { loadLocalEnvFile, requireJwtSecret } from './config/required-env';
 
 async function bootstrap() {
   const logger = new Logger('AssetSchoolCore');
+
+  // R0 / S7: secrets come from the environment or a local env file (never from code).
+  const envFile = loadLocalEnvFile([
+    process.env.ASSETSCHOOL_ENV_FILE || '',
+    path.join(process.cwd(), '.env.local'),
+    path.join(process.cwd(), '..', '..', '.env.local'),
+  ]);
+  if (envFile) {
+    logger.log(`Variables de entorno cargadas desde ${envFile}`);
+  }
+  try {
+    requireJwtSecret();
+  } catch (err: any) {
+    logger.error(err.message);
+    process.exit(1);
+  }
+
   const app = await NestFactory.create(AppModule);
 
   // Security: Configurable CORS policy for local LAN
@@ -38,7 +57,7 @@ async function bootstrap() {
   logger.log(`  AssetSchool Local Server — Core Engine (Phase 01.1 Audited)`);
   logger.log(`  REST API listening on: http://localhost:${port}/api/v1`);
   logger.log(`  Agent WebSocket Gateway active on port: ${port}`);
-  logger.log(`  Local LAN Discovery: Active (UDP 48500 / TCP 48501)`);
+  logger.log(`  Local LAN Discovery: UDP 48500 (WebSocket compartido en el puerto ${port})`);
   logger.log(`================================================================`);
 }
 

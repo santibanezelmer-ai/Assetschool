@@ -6,7 +6,8 @@ services:
     environment:
       POSTGRES_DB: assetschool_db
       POSTGRES_USER: assetschool_admin
-      POSTGRES_PASSWORD: assetschool_secure_pass_2026
+      # R0 / S7: secrets come from the env file (docker compose --env-file .env.local up -d)
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:?Defina DATABASE_PASSWORD (npm run env:dev)}
     ports:
       - "5432:5432"
     volumes:
@@ -35,9 +36,9 @@ services:
       DATABASE_HOST: postgres
       DATABASE_PORT: 5432
       DATABASE_USER: assetschool_admin
-      DATABASE_PASSWORD: assetschool_secure_pass_2026
+      DATABASE_PASSWORD: ${DATABASE_PASSWORD:?Defina DATABASE_PASSWORD (npm run env:dev)}
       DATABASE_NAME: assetschool_db
-      JWT_SECRET: assetschool_jwt_super_secret_local_lan_token_phase1_2026
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET (npm run env:dev)}
       LAN_DISCOVERY_PORT: 48500
       AGENT_WS_PORT: 48501
     ports:

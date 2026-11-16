@@ -5,13 +5,17 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { RolesGuard } from './roles.guard';
+import { requireJwtSecret } from '../config/required-env';
 
 @Module({
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt' }),
-    JwtModule.register({
-      secret: process.env.JWT_SECRET || 'assetschool_jwt_super_secret_local_lan_token_phase1_2026',
-      signOptions: { expiresIn: '8h' },
+    // R0 / S7: the secret is resolved at bootstrap and is mandatory.
+    JwtModule.registerAsync({
+      useFactory: () => ({
+        secret: requireJwtSecret(),
+        signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '8h' },
+      }),
     }),
   ],
   controllers: [AuthController],

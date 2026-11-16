@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { AllowPendingPasswordChange } from './token-policy';
 import {
   LoginRequestSchema,
   LoginRequest,
@@ -31,6 +32,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @AllowPendingPasswordChange()
   @Post('change-password')
   @HttpCode(HttpStatus.OK)
   async changePassword(
@@ -49,6 +51,7 @@ export class AuthController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @AllowPendingPasswordChange()
   @Get('me')
   async getProfile(@Request() req: any) {
     return this.authService.getCurrentUser(req.user.userId);

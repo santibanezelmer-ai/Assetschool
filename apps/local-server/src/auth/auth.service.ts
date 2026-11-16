@@ -10,6 +10,7 @@ import { DatabaseService } from '../database/database.service';
 import { LoginRequest, ChangePasswordRequest } from '@assetschool/validators';
 import { SystemRole } from '@assetschool/shared-types';
 import { randomUUID } from 'crypto';
+import { ACCESS_TOKEN_TYPE, REFRESH_TOKEN_TYPE } from './token-policy';
 
 @Injectable()
 export class AuthService {
@@ -62,6 +63,7 @@ export class AuthService {
 
     const payload = {
       sub: user.id,
+      type: ACCESS_TOKEN_TYPE,
       email: user.email,
       role: user.role_name as SystemRole,
       institutionId: user.institution_id,
@@ -72,7 +74,7 @@ export class AuthService {
 
     const accessToken = this.jwtService.sign(payload);
     const refreshToken = this.jwtService.sign(
-      { sub: user.id, type: 'refresh' },
+      { sub: user.id, type: REFRESH_TOKEN_TYPE },
       { expiresIn: '7d' },
     );
 
@@ -170,7 +172,7 @@ export class AuthService {
   async refreshToken(refreshToken: string) {
     try {
       const decoded: any = this.jwtService.verify(refreshToken);
-      if (!decoded || decoded.type !== 'refresh') {
+      if (!decoded || decoded.type !== REFRESH_TOKEN_TYPE) {
         throw new UnauthorizedException('Token de refresco inválido');
       }
 
@@ -199,6 +201,7 @@ export class AuthService {
 
       const newAccessToken = this.jwtService.sign({
         sub: user.id,
+        type: ACCESS_TOKEN_TYPE,
         email: user.email,
         role: user.role_name as SystemRole,
         institutionId: user.institution_id,

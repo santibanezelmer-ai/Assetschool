@@ -10,7 +10,22 @@ const __dirname = path.dirname(__filename);
 const PG_DIR = path.resolve(__dirname, 'data');
 const PORT = Number(process.env.DATABASE_PORT) || 5432;
 const USER = process.env.DATABASE_USER || 'assetschool_admin';
-const PASSWORD = process.env.DATABASE_PASSWORD || 'assetschool_secure_pass_2026';
+// R0 / S7: no hardcoded default password. Load .env.local (repo root) when present.
+const ENV_FILE = process.env.ASSETSCHOOL_ENV_FILE || path.resolve(__dirname, '../../.env.local');
+if (fs.existsSync(ENV_FILE)) {
+  for (const raw of fs.readFileSync(ENV_FILE, 'utf8').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.indexOf('=') <= 0) continue;
+    const key = line.slice(0, line.indexOf('=')).trim();
+    const value = line.slice(line.indexOf('=') + 1).trim().replace(/^(['"])(.*)\1$/, '$2');
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
+}
+const PASSWORD = process.env.DATABASE_PASSWORD;
+if (!PASSWORD) {
+  console.error('[PG-Manager] DATABASE_PASSWORD no definida. Ejecute "npm run env:dev" o defina la variable.');
+  process.exit(1);
+}
 const DATABASE = process.env.DATABASE_NAME || 'assetschool_db';
 
 export function getPgInstance() {

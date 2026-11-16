@@ -43,9 +43,20 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     const host = process.env.DATABASE_HOST || 'localhost';
     const port = Number(process.env.DATABASE_PORT) || 5432;
     const user = process.env.DATABASE_USER || 'assetschool_admin';
-    const password =
-      process.env.DATABASE_PASSWORD || 'assetschool_secure_pass_2026';
     const database = process.env.DATABASE_NAME || 'assetschool_db';
+
+    // R0 / S7: the database password has no hardcoded default.
+    const password = process.env.DATABASE_PASSWORD;
+    if (!password) {
+      this.isConnected = false;
+      this.pool = null;
+      this.logger.error(
+        `[FATAL] DATABASE_PASSWORD no está definida. AssetSchool no usa contraseñas por defecto. ` +
+          `Genere un entorno local con 'npm run env:dev' o defina la variable. ` +
+          `Las operaciones que requieran persistencia serán rechazadas con 503.`,
+      );
+      return;
+    }
 
     this.logger.log(
       `Conectando a PostgreSQL en ${host}:${port}/${database}...`,

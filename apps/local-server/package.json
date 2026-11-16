@@ -8,6 +8,7 @@
     "start": "node dist/main.js",
     "start:dev": "ts-node src/main.ts",
     "test": "jest",
+    "test:pg": "jest --runInBand --testPathIgnorePatterns=/node_modules/ --testRegex=\".*\\.pg-integration\\.spec\\.ts$\"",
     "test:cov": "jest --coverage",
     "clean": "rm -rf dist"
   },
@@ -56,6 +57,13 @@
     ],
     "rootDir": "src",
     "testRegex": ".*\\.spec\\.ts$",
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "\\.pg-integration\\.spec\\.ts$"
+    ],
+    "setupFiles": [
+      "<rootDir>/../test/jest.setup-env.ts"
+    ],
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
     },
