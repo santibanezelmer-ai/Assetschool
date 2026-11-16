@@ -98,6 +98,27 @@ interface ClassroomTarget {
 }
 
 const REMOTE_CONTROL_IDLE_TIMEOUT_MS = 60_000;
+const SHORT_REQUEST_TTL_MS = 60_000;
+const TRANSFER_REQUEST_TTL_MS = 10 * 60_000;
+
+type AgentResultKind =
+  | 'FILE_LIST_DIR_RESULT'
+  | 'FILE_SEND_RESULT'
+  | 'FILE_COLLECT_RESULT'
+  | 'PROCESS_LIST_RESULT'
+  | 'KILL_PROCESS_RESULT';
+
+/** R0 / S2: a teacher request waiting for its agent result. */
+interface PendingAgentRequest {
+  key: string;
+  kind: AgentResultKind;
+  requestId?: string;
+  deviceId: string;
+  agentSocketId: string;
+  teacherSocketId: string;
+  createdAt: number;
+  expiresAt: number;
+}
 
 interface ActiveStreamSession {
   sessionId: string;
@@ -128,6 +149,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private activeStreamSessions = new Map<string, ActiveStreamSession>(); // sessionId -> ActiveStreamSession
   private remoteControlSessions = new Map<string, RemoteControlSession>(); // `${teacherSocket}:${deviceId}`
   private remoteControlAuthorizations = new Map<string, Promise<RemoteControlSession | null>>();
+  private pendingAgentRequests = new Map<string, PendingAgentRequest>();
   private heartbeatIntervalTimer: NodeJS.Timeout | null = null;
 
   constructor(
@@ -177,6 +199,9 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     if (teacherSession) {
       this.logger.log(`Docente desconectado: ${teacherSession.email} (User: ${teacherSession.userId})`);
       this.endRemoteControlSessionsWhere((s) => s.teacherSocketId === client.id, 'Docente desconectado');
+      for (const [key, pending] of this.pendingAgentRequests.entries()) {
+        if (pending.teacherSocketId === client.id) this.pendingAgentRequests.delete(key);
+      }
       for (const sessionId of teacherSession.activeSessionIds) {
         const stream = this.activeStreamSessions.get(sessionId);
         if (stream) {
@@ -709,13 +734,16 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<ScreenCaptureStopPayload>,
   ): Promise<ProtocolEnvelope<{ stopped: boolean }>> {
-    const payload = envelope.payload;
+    const payload = envelope?.payload;
     const sessionId = payload?.sessionId;
 
-    if (sessionId) {
-      await this.stopStreamInternal(sessionId, payload.reason || 'Detención manual solicitada por el usuario');
+    // R0 / S2: only the two participants of a stream may stop it.
+    const stream = sessionId ? this.activeStreamSessions.get(sessionId) : undefined;
+    if (!stream || (client.id !== stream.teacherSocketId && client.id !== stream.agentSocketId)) {
+      return createEnvelope(PacketType.SCREEN_CAPTURE_STOP, 'SERVER', 'server', { stopped: false });
     }
 
+    await this.stopStreamInternal(sessionId!, payload.reason || 'Detención manual solicitada por el usuario');
     return createEnvelope(PacketType.SCREEN_CAPTURE_STOP, 'SERVER', 'server', { stopped: true });
   }
 
@@ -867,7 +895,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     if (payload.sessionId) {
       const stream = this.activeStreamSessions.get(payload.sessionId);
-      if (stream) {
+      // R0 / S2: only participants may report an error that tears the stream down.
+      if (stream && (client.id === stream.teacherSocketId || client.id === stream.agentSocketId)) {
         // Forward error to other side
         const targetSocketId = client.id === stream.teacherSocketId ? stream.agentSocketId : stream.teacherSocketId;
         const targetSocket = this.server?.sockets?.sockets?.get(targetSocketId);
@@ -892,7 +921,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     if (payload.activeSessionId) {
       const stream = this.activeStreamSessions.get(payload.activeSessionId);
-      if (stream) {
+      // R0 / S2: status is only relayed when it comes from the stream's agent.
+      if (stream && client.id === stream.agentSocketId) {
         const teacherSocket = this.server?.sockets?.sockets?.get(stream.teacherSocketId);
         if (teacherSocket) {
           teacherSocket.emit(PacketType.SCREEN_CAPTURE_STATUS, envelope);
@@ -909,7 +939,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const payload = envelope.payload;
     if (payload.sessionId) {
       const stream = this.activeStreamSessions.get(payload.sessionId);
-      if (stream) {
+      // R0 / S2: stats are only relayed when they come from the stream's agent.
+      if (stream && client.id === stream.agentSocketId) {
         const teacherSocket = this.server?.sockets?.sockets?.get(stream.teacherSocketId);
         if (teacherSocket) {
           teacherSocket.emit(PacketType.SCREEN_STREAM_STATS, envelope);
@@ -1180,14 +1211,22 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const payload = envelope?.payload;
     if (!payload?.commandId) return;
 
+    // R0 / S2: only the enrolled agent of the command's device may report its result.
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent?.deviceId || this.deviceToAgentSocket.get(agent.deviceId) !== client.id) {
+      this.logger.warn(`COMMAND_RESULT descartado: el emisor ${client.id} no es un agente inscrito`);
+      return;
+    }
+
     if (this.databaseService.isDatabaseReady) {
       await this.databaseService.query(
-        `UPDATE commands SET status = $1, executed_at = NOW(), result_json = $2, error_details = $3 WHERE id = $4`,
+        `UPDATE commands SET status = $1, executed_at = NOW(), result_json = $2, error_details = $3 WHERE id = $4 AND device_id = $5`,
         [
           payload.success ? CommandStatus.EXECUTED : CommandStatus.FAILED,
           JSON.stringify(payload),
           payload.error || null,
           payload.commandId,
+          agent.deviceId,
         ],
       ).catch(() => {});
     }
@@ -1207,16 +1246,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     if (!auth.ok) return { success: false, error: auth.error };
     const socketId = auth.agentSocketId!;
 
+    const requestId = randomUUID();
     const envelope = createEnvelope(
       PacketType.FILE_LIST_DIR,
       'SERVER',
       'server',
       {
-        requestId: randomUUID(),
+        requestId,
         deviceId: auth.device.id,
         dirPath: body.dirPath,
       },
     );
+    this.registerPendingRequest('FILE_LIST_DIR_RESULT', requestId, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.FILE_LIST_DIR, envelope);
     this.emitToSocket(socketId, 'FILE_LIST_DIR', envelope);
     return { success: true };
@@ -1227,7 +1268,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<any>,
   ) {
-    this.server.emit('FILE_LIST_DIR_RESULT', envelope?.payload || envelope);
+    this.routeAgentResult(client, 'FILE_LIST_DIR_RESULT', envelope, 'requestId');
   }
 
   @SubscribeMessage('TEACHER_SEND_FILE')
@@ -1261,6 +1302,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       if (!scope.ok) return { success: false, error: scope.error };
       let count = 0;
       for (const target of scope.targets) {
+        this.registerPendingRequest('FILE_SEND_RESULT', transferId, target.deviceId, target.socketId, client.id, TRANSFER_REQUEST_TTL_MS);
         this.emitToSocket(target.socketId, PacketType.FILE_SEND, envelope);
         this.emitToSocket(target.socketId, 'FILE_SEND', envelope);
         count++;
@@ -1269,6 +1311,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     } else if (body?.deviceId) {
       const auth = await this.authorizeDeviceAction(client, body.deviceId, PermissionKey.DEVICE_FILE_TRANSFER);
       if (!auth.ok) return { success: false, error: auth.error };
+      this.registerPendingRequest('FILE_SEND_RESULT', transferId, auth.device.id, auth.agentSocketId!, client.id, TRANSFER_REQUEST_TTL_MS);
       this.emitToSocket(auth.agentSocketId!, PacketType.FILE_SEND, envelope);
       this.emitToSocket(auth.agentSocketId!, 'FILE_SEND', envelope);
       return { success: true, broadcast: false };
@@ -1281,7 +1324,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<any>,
   ) {
-    this.server.emit('FILE_SEND_RESULT', envelope?.payload || envelope);
+    this.routeAgentResult(client, 'FILE_SEND_RESULT', envelope, 'transferId');
   }
 
   @SubscribeMessage('TEACHER_COLLECT_FILE')
@@ -1293,16 +1336,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     if (!auth.ok) return { success: false, error: auth.error };
     const socketId = auth.agentSocketId!;
 
+    const collectId = randomUUID();
     const envelope = createEnvelope(
       PacketType.FILE_COLLECT,
       'SERVER',
       'server',
       {
-        collectId: randomUUID(),
+        collectId,
         deviceId: auth.device.id,
         filePath: body.filePath,
       },
     );
+    this.registerPendingRequest('FILE_COLLECT_RESULT', collectId, auth.device.id, socketId, client.id, TRANSFER_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.FILE_COLLECT, envelope);
     this.emitToSocket(socketId, 'FILE_COLLECT', envelope);
     return { success: true };
@@ -1313,7 +1358,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<any>,
   ) {
-    this.server.emit('FILE_COLLECT_RESULT', envelope?.payload || envelope);
+    this.routeAgentResult(client, 'FILE_COLLECT_RESULT', envelope, 'collectId');
   }
 
   // -------------------------------------------------------------
@@ -1331,6 +1376,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const envelope = createEnvelope(PacketType.PROCESS_LIST_REQUEST, 'SERVER', 'server', {
       deviceId: auth.device.id,
     });
+    this.registerPendingRequest('PROCESS_LIST_RESULT', undefined, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.PROCESS_LIST_REQUEST, envelope);
     this.emitToSocket(socketId, 'PROCESS_LIST_REQUEST', envelope);
     return { success: true };
@@ -1341,7 +1387,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<any>,
   ) {
-    this.server.emit('PROCESS_LIST_RESULT', envelope?.payload || envelope);
+    this.routeAgentResult(client, 'PROCESS_LIST_RESULT', envelope);
   }
 
   @SubscribeMessage('TEACHER_KILL_PROCESS')
@@ -1359,6 +1405,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       processName: body.processName,
       bundleId: body.bundleId,
     });
+    this.registerPendingRequest('KILL_PROCESS_RESULT', undefined, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.KILL_PROCESS, envelope);
     this.emitToSocket(socketId, 'KILL_PROCESS', envelope);
     return { success: true };
@@ -1369,7 +1416,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     @ConnectedSocket() client: Socket,
     @MessageBody() envelope: ProtocolEnvelope<any>,
   ) {
-    this.server.emit('KILL_PROCESS_RESULT', envelope?.payload || envelope);
+    this.routeAgentResult(client, 'KILL_PROCESS_RESULT', envelope);
   }
 
   // -------------------------------------------------------------
@@ -1644,9 +1691,90 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     return { ok: true, teacher, targets };
   }
 
+  /** R0 / S2: remembers which teacher socket asked a given agent for a result. */
+  private registerPendingRequest(
+    kind: AgentResultKind,
+    requestId: string | undefined,
+    deviceId: string,
+    agentSocketId: string,
+    teacherSocketId: string,
+    ttlMs: number,
+  ) {
+    const now = Date.now();
+    const key = `${kind}:${requestId ?? randomUUID()}:${deviceId}`;
+    this.pendingAgentRequests.set(key, {
+      key,
+      kind,
+      requestId,
+      deviceId,
+      agentSocketId,
+      teacherSocketId,
+      createdAt: now,
+      expiresAt: now + ttlMs,
+    });
+  }
+
+  /**
+   * R0 / S2: an agent result is accepted only from the enrolled agent socket of
+   * the device and delivered only to the teacher socket(s) that requested it.
+   * Never broadcast. The deviceId in the payload is replaced by the server-side
+   * identity of the sending agent.
+   */
+  private routeAgentResult(
+    client: Socket,
+    kind: AgentResultKind,
+    envelope: ProtocolEnvelope<any> | any,
+    idField?: string,
+  ): number {
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent || !agent.deviceId || this.deviceToAgentSocket.get(agent.deviceId) !== client.id) {
+      this.logger.warn(`${kind} descartado: el emisor ${client.id} no es un agente inscrito`);
+      return 0;
+    }
+
+    const payload = envelope?.payload ?? envelope;
+    if (!payload || typeof payload !== 'object') return 0;
+
+    const now = Date.now();
+    const requestId = idField ? payload[idField] : undefined;
+    let matches: PendingAgentRequest[] = [];
+
+    if (typeof requestId === 'string' && requestId.length > 0) {
+      const exact = this.pendingAgentRequests.get(`${kind}:${requestId}:${agent.deviceId}`);
+      if (exact && exact.agentSocketId === client.id && exact.expiresAt > now) {
+        matches = [exact];
+      }
+    } else {
+      // Agents that do not echo a request id (process list / kill): deliver to
+      // the pending requesters of this kind for this same agent.
+      matches = Array.from(this.pendingAgentRequests.values()).filter(
+        (p) => p.kind === kind && p.deviceId === agent.deviceId && p.agentSocketId === client.id && p.expiresAt > now,
+      );
+    }
+
+    if (matches.length === 0) {
+      this.logger.warn(`${kind} no solicitado descartado (dispositivo ${agent.deviceId})`);
+      return 0;
+    }
+
+    const sanitized = { ...payload, deviceId: agent.deviceId };
+    let delivered = 0;
+    for (const pending of matches) {
+      this.pendingAgentRequests.delete(pending.key);
+      if (this.connectedTeachers.has(pending.teacherSocketId) && this.emitToSocket(pending.teacherSocketId, kind, sanitized)) {
+        delivered++;
+      }
+    }
+    return delivered;
+  }
+
   private checkStaleConnections() {
     const now = Date.now();
     const TIMEOUT_MS = 35000;
+
+    for (const [key, pending] of this.pendingAgentRequests.entries()) {
+      if (pending.expiresAt <= now) this.pendingAgentRequests.delete(key);
+    }
 
     for (const session of Array.from(this.remoteControlSessions.values())) {
       if (now - session.lastInputAt > REMOTE_CONTROL_IDLE_TIMEOUT_MS) {
