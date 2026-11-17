@@ -408,13 +408,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         const device = devRes.rows[0];
         if (device.is_revoked) {
           this.logger.warn(`Conexión rechazada: El dispositivo MAC ${payload.macAddress} está REVOCADO`);
-          client.disconnect(true);
-          return createEnvelope(
-            PacketType.SERVER_HELLO_ACK,
-            'SERVER',
-            'server',
-            { error: 'Dispositivo revocado por el administrador' } as any,
-          );
+          return this.rejectAgentHello(client, 'Dispositivo revocado por el administrador');
         }
         // R0 / S4: an already connected, alive session for this device cannot be
         // displaced by a newcomer with the same MAC; a stale one is replaced and audited.
@@ -436,13 +430,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
               ipAddress: client.handshake?.address,
               details: { macAddress: payload.macAddress, hostname: payload.hostname, activeSocketId: existingSocketId },
             });
-            client.disconnect(true);
-            return createEnvelope(
-              PacketType.SERVER_HELLO_ACK,
-              'SERVER',
-              'server',
-              { error: 'Ya existe una sesión activa para este dispositivo' } as any,
-            );
+            return this.rejectAgentHello(client, 'Ya existe una sesión activa para este dispositivo');
           }
           this.terminateDeviceStreams(device.id, 'Sesión de agente reemplazada');
           this.connectedAgents.delete(existingSocketId);
@@ -513,6 +501,16 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       client.emit(PacketType.SERVER_HELLO_ACK, ack);
     }
     return ack;
+  }
+
+  /** Tells the agent why its handshake was rejected, then closes the socket. */
+  private rejectAgentHello(client: Socket, error: string): ProtocolEnvelope<{ error: string }> {
+    const ack = createEnvelope(PacketType.SERVER_HELLO_ACK, 'SERVER', 'server', { error } as any);
+    if (typeof client?.emit === 'function') {
+      client.emit(PacketType.SERVER_HELLO_ACK, ack);
+    }
+    client.disconnect(true);
+    return ack as any;
   }
 
   @SubscribeMessage(PacketType.HEARTBEAT_PING)
