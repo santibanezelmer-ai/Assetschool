@@ -51,6 +51,11 @@ if !isJsonMode {
 
 let indicator = CaptureIndicatorWindow()
 let webrtcEngine = WebRtcNativeEngine()
+// R0 / S5: synthetic test frames only with an explicit flag (never silently).
+webrtcEngine.allowSyntheticFrames = CommandLine.arguments.contains("--synthetic-frames")
+if webrtcEngine.allowSyntheticFrames {
+    print("[AVISO] --synthetic-frames: si no hay permiso de captura se enviarán cuadros SINTÉTICOS, no la pantalla real.")
+}
 
 if isDiscoveryMode {
     print("\n[DESCUBRIMIENTO LAN] Escuchando balizas UDP en puerto 48500...")

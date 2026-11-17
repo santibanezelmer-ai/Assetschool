@@ -19,6 +19,12 @@ let package = Package(
                 .product(name: "WebRTC", package: "WebRTC")
             ],
             path: "Sources/AssetSchoolAgent"
+        ),
+        // R0 / S5: security tests for the file sandbox.
+        .testTarget(
+            name: "AssetSchoolAgentTests",
+            dependencies: ["AssetSchoolAgent"],
+            path: "Tests/AssetSchoolAgentTests"
         )
     ]
 )

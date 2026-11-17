@@ -29,7 +29,26 @@ public class WebRtcNativeEngine: NSObject, RTCPeerConnectionDelegate, SCStreamOu
     public private(set) var isConnected: Bool = false
     public private(set) var currentSessionId: String = ""
     public private(set) var hasTccPermission: Bool = false
-    
+
+    /// R0 / S5: synthetic test frames are opt-in only (--synthetic-frames).
+    public var allowSyntheticFrames: Bool = false
+    /// Origin of the frames of the current stream: "screencapturekit", "synthetic" or "none".
+    public private(set) var frameSource: String = "none"
+
+    public enum ScreenCaptureError: Error, LocalizedError {
+        case permissionDenied
+        case noDisplay
+
+        public var errorDescription: String? {
+            switch self {
+            case .permissionDenied:
+                return "Permiso de Grabación de pantalla no concedido en macOS (Ajustes del Sistema > Privacidad y seguridad)."
+            case .noDisplay:
+                return "No se detectó ninguna pantalla física para capturar."
+            }
+        }
+    }
+
     public override init() {
         RTCInitializeSSL()
         let encoderFactory = RTCDefaultVideoEncoderFactory()
@@ -157,23 +176,36 @@ public class WebRtcNativeEngine: NSObject, RTCPeerConnectionDelegate, SCStreamOu
         self.hasTccPermission = CGPreflightScreenCaptureAccess()
         
         if !hasTccPermission {
-            print("[SCREENCAPTUREKIT] AVISO: Permiso TCC no concedido para este proceso terminal.")
+            print("[SCREENCAPTUREKIT] AVISO: Permiso de Grabación de pantalla (TCC) no concedido para este proceso.")
             print("[SCREENCAPTUREKIT] Solicitando autorización del sistema...")
             _ = CGRequestScreenCaptureAccess()
-            
-            // For environments without interactive TCC consent, initialize native frame generator
-            // to feed genuine video buffers into RTCVideoSource so WebRTC transport & encoding run for real!
-            startSyntheticFrameGenerator(config: config)
-            return
+
+            // R0 / S5: synthetic frames are only allowed with the explicit
+            // --synthetic-frames flag (test benches). Otherwise the missing
+            // permission is reported instead of silently sending fake video.
+            if allowSyntheticFrames {
+                print("[FRAME GENERATOR] --synthetic-frames activo: se enviarán CUADROS SINTÉTICOS (no es la pantalla real).")
+                frameSource = "synthetic"
+                startSyntheticFrameGenerator(config: config)
+                return
+            }
+            frameSource = "none"
+            throw ScreenCaptureError.permissionDenied
         }
-        
+
         print("[SCREENCAPTUREKIT] TCC concedido. Enumerando pantallas con SCShareableContent...")
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         guard let display = content.displays.first else {
-            print("[SCREENCAPTUREKIT] No se detectó pantalla física activa. Usando generador de cuadros de respaldo.")
-            startSyntheticFrameGenerator(config: config)
-            return
+            if allowSyntheticFrames {
+                print("[FRAME GENERATOR] Sin pantalla física y --synthetic-frames activo: se enviarán CUADROS SINTÉTICOS.")
+                frameSource = "synthetic"
+                startSyntheticFrameGenerator(config: config)
+                return
+            }
+            frameSource = "none"
+            throw ScreenCaptureError.noDisplay
         }
+        frameSource = "screencapturekit"
         
         let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
         let streamConfig = SCStreamConfiguration()

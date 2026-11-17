@@ -279,6 +279,23 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
                 self.onStreamStarted?()
             } catch {
                 print("[GATEWAY CLIENT ERROR] Error al crear oferta WebRTC: \(error.localizedDescription)")
+                // R0 / S5: report the failure (e.g. missing screen recording
+                // permission) instead of silently streaming synthetic frames.
+                let isPermission = (error as? WebRtcNativeEngine.ScreenCaptureError) == .permissionDenied
+                let errorEnvelope: [String: Any] = [
+                    "packetId": UUID().uuidString,
+                    "packetType": "WEBRTC_ERROR",
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000),
+                    "senderId": self.deviceId,
+                    "target": "server",
+                    "payload": [
+                        "sessionId": sessionId,
+                        "deviceId": self.deviceId,
+                        "code": isPermission ? "PERMISSION_DENIED" : "PEER_CONNECTION_FAILED",
+                        "message": error.localizedDescription
+                    ]
+                ]
+                self.sendEvent(name: "WEBRTC_ERROR", payload: errorEnvelope)
             }
         }
     }
