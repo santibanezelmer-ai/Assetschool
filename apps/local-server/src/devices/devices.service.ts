@@ -2,6 +2,7 @@ import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ForbiddenException,
   Logger,
   Optional,
 } from '@nestjs/common';
@@ -60,7 +61,11 @@ export class DevicesService {
     return res.rows[0];
   }
 
-  async registerAgent(dto: AgentRegistration) {
+  /**
+   * @param restrictToInstitutionId R0 / S4: when set (non-SUPERADMIN caller),
+   * the device can only be registered in the caller's own institution.
+   */
+  async registerAgent(dto: AgentRegistration, restrictToInstitutionId?: string) {
     // 1. Resolve institution by code
     const instRes = await this.databaseService.query(
       'SELECT id FROM institutions WHERE code = $1',
@@ -74,6 +79,9 @@ export class DevicesService {
     }
 
     const institutionId = instRes.rows[0].id;
+    if (restrictToInstitutionId && institutionId !== restrictToInstitutionId) {
+      throw new ForbiddenException('Aislamiento institucional: no puede registrar equipos en otra institución');
+    }
 
     // 2. Check if device MAC exists
     const existingRes = await this.databaseService.query(

@@ -29,10 +29,16 @@ export class DevicesController {
     return this.devicesService.findOne(id, institutionId);
   }
 
+  // R0 / S4: registering a device is an administrative action. It used to be
+  // unauthenticated, which let anyone on the LAN (the institution code is in the
+  // UDP beacon) register a device and bypass agent quarantine.
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(SystemRole.SUPERADMIN, SystemRole.INSTITUTION_ADMIN, SystemRole.TECH_SUPPORT)
   @Post('register')
-  async register(@Body() body: AgentRegistration) {
+  async register(@Body() body: AgentRegistration, @Request() req: any) {
     const validated = AgentRegistrationSchema.parse(body);
-    return this.devicesService.registerAgent(validated);
+    const restrictTo = req.user?.role === SystemRole.SUPERADMIN ? undefined : req.user?.institutionId;
+    return this.devicesService.registerAgent(validated, restrictTo);
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -48,6 +48,8 @@ interface AuthenticatedAgentSession {
   authenticatedAt: number;
   lastHeartbeatAt: number;
   isCapturing?: boolean;
+  /** R0 / S4: unknown or unverifiable agents are kept connected but inert. */
+  quarantined?: boolean;
 }
 
 interface AuthenticatedTeacherSession {
@@ -98,6 +100,8 @@ interface ClassroomTarget {
 }
 
 const REMOTE_CONTROL_IDLE_TIMEOUT_MS = 60_000;
+/** An agent session with a heartbeat within this window is considered alive. */
+const AGENT_LIVENESS_WINDOW_MS = 20_000;
 const SHORT_REQUEST_TTL_MS = 60_000;
 const TRANSFER_REQUEST_TTL_MS = 10 * 60_000;
 
@@ -180,7 +184,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     const agentSession = this.connectedAgents.get(client.id);
     if (agentSession) {
       this.logger.warn(`Agente desconectado: ${agentSession.hostname} (Device: ${agentSession.deviceId || 'N/A'})`);
-      if (agentSession.deviceId) {
+      // Only tear down the device mapping if it still points to this socket.
+      if (agentSession.deviceId && this.deviceToAgentSocket.get(agentSession.deviceId) === client.id) {
         this.deviceToAgentSocket.delete(agentSession.deviceId);
         this.terminateDeviceStreams(agentSession.deviceId, 'Agente desconectado de la red local');
         if (this.databaseService.isDatabaseReady) {
@@ -379,17 +384,27 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       );
     }
 
+    // R0 / S4 (interim until R2 enrollment): identity is resolved ONLY from the
+    // devices table. The client-supplied enrolledDeviceId is ignored and there
+    // is no default institution: unknown agents are quarantined (connected, but
+    // neither visible nor controllable).
     let isEnrolled = false;
-    let deviceId = payload.enrolledDeviceId;
-    let institutionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+    let deviceId: string | undefined;
+    let institutionId: string | undefined;
+    let quarantineReason: string | null = 'Dispositivo no registrado';
 
-    if (this.databaseService.isDatabaseReady) {
+    if (!this.databaseService.isDatabaseReady) {
+      quarantineReason = 'Base de datos no disponible: identidad no verificable';
+    } else {
       const devRes = await this.databaseService.query(
         'SELECT id, is_revoked, institution_id FROM devices WHERE LOWER(mac_address) = LOWER($1)',
         [payload.macAddress],
       );
 
-      if (devRes.rows.length > 0) {
+      if (devRes.rows.length > 1) {
+        quarantineReason = 'MAC registrada en más de una institución: identidad ambigua';
+        this.logger.warn(`Agente en cuarentena: ${quarantineReason} (${payload.macAddress})`);
+      } else if (devRes.rows.length === 1) {
         const device = devRes.rows[0];
         if (device.is_revoked) {
           this.logger.warn(`Conexión rechazada: El dispositivo MAC ${payload.macAddress} está REVOCADO`);
@@ -401,7 +416,49 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
             { error: 'Dispositivo revocado por el administrador' } as any,
           );
         }
+        // R0 / S4: an already connected, alive session for this device cannot be
+        // displaced by a newcomer with the same MAC; a stale one is replaced and audited.
+        const existingSocketId = this.deviceToAgentSocket.get(device.id);
+        if (existingSocketId && existingSocketId !== client.id) {
+          const existing = this.connectedAgents.get(existingSocketId);
+          const existingSocket = this.server?.sockets?.sockets?.get(existingSocketId);
+          const alive =
+            !!existing && !!existingSocket && Date.now() - existing.lastHeartbeatAt < AGENT_LIVENESS_WINDOW_MS;
+          if (alive) {
+            this.logger.warn(
+              `Conexión duplicada rechazada para ${device.id} (MAC ${payload.macAddress}) desde ${client.handshake?.address}`,
+            );
+            await this.writeAudit({
+              institutionId: device.institution_id,
+              action: 'AGENT_DUPLICATE_REJECTED',
+              entityType: 'DEVICE',
+              entityId: device.id,
+              ipAddress: client.handshake?.address,
+              details: { macAddress: payload.macAddress, hostname: payload.hostname, activeSocketId: existingSocketId },
+            });
+            client.disconnect(true);
+            return createEnvelope(
+              PacketType.SERVER_HELLO_ACK,
+              'SERVER',
+              'server',
+              { error: 'Ya existe una sesión activa para este dispositivo' } as any,
+            );
+          }
+          this.terminateDeviceStreams(device.id, 'Sesión de agente reemplazada');
+          this.connectedAgents.delete(existingSocketId);
+          existingSocket?.disconnect(true);
+          await this.writeAudit({
+            institutionId: device.institution_id,
+            action: 'AGENT_SESSION_REPLACED',
+            entityType: 'DEVICE',
+            entityId: device.id,
+            ipAddress: client.handshake?.address,
+            details: { macAddress: payload.macAddress, hostname: payload.hostname, previousSocketId: existingSocketId },
+          });
+        }
+
         isEnrolled = true;
+        quarantineReason = null;
         deviceId = device.id;
         institutionId = device.institution_id;
 
@@ -424,13 +481,18 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       authenticatedAt: Date.now(),
       lastHeartbeatAt: Date.now(),
       isCapturing: false,
+      quarantined: !isEnrolled,
     });
 
-    if (deviceId) {
+    if (isEnrolled && deviceId) {
       this.deviceToAgentSocket.set(deviceId, client.id);
+      this.logger.log(`Handshake exitoso: ${payload.hostname} (${payload.osType}) - Token emitido.`);
+    } else {
+      this.logger.warn(
+        `Agente en CUARENTENA: ${payload.hostname} (MAC ${payload.macAddress}, ${client.handshake?.address}) — ${quarantineReason}. ` +
+          `Regístrelo con POST /api/v1/devices/register y reconecte el agente.`,
+      );
     }
-
-    this.logger.log(`Handshake exitoso: ${payload.hostname} (${payload.osType}) - Token emitido.`);
 
     const ack = createEnvelope(
       PacketType.SERVER_HELLO_ACK,
@@ -439,7 +501,8 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       {
         serverTime: Date.now(),
         serverVersion: '1.0.0-phase2.0',
-        institutionId,
+        // Quarantined agents learn nothing about institutions or device ids.
+        institutionId: institutionId || '',
         isEnrolled,
         assignedDeviceId: deviceId,
         sessionToken,
@@ -1916,7 +1979,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     for (const [socketId, session] of this.connectedAgents.entries()) {
       if (now - session.lastHeartbeatAt > TIMEOUT_MS) {
         this.logger.warn(`Conexión perdida por timeout de latido (>35s): ${session.hostname}`);
-        if (session.deviceId) {
+        if (session.deviceId && this.deviceToAgentSocket.get(session.deviceId) === socketId) {
           this.deviceToAgentSocket.delete(session.deviceId);
           this.terminateDeviceStreams(session.deviceId, 'Timeout de latido LAN');
           if (this.databaseService.isDatabaseReady) {
