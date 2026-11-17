@@ -1,5 +1,14 @@
 # AssetSchool Agent — Windows (C# / .NET 8)
 
+> [!CAUTION]
+> **PROTOTIPO LEGACY — NO DESPLEGAR EN PRODUCCIÓN NI EN EQUIPOS DE ALUMNOS.**
+> Auditoría R0 (16-nov-2026), hallazgo S5 — sin corregir en este código:
+> - `FILE_SEND` escribe con `Path.Combine(carpeta, fileName)` sin validar: un nombre con `..\` o una ruta absoluta escribe fuera de `Downloads\AssetSchool` (path traversal).
+> - `FILE_COLLECT` lee **cualquier ruta** del equipo y la envía al servidor.
+> - La captura de pantalla es un stub (`byte[64]`), no hay servicio de Windows, IPC ni hook de teclado.
+>
+> Este agente será reemplazado por `agents/windows-student` (fase R4: servicio + proceso de sesión + MSI). No se corrige aquí porque no hay .NET SDK en el entorno de desarrollo para compilarlo ni probarlo. Se conserva solo como referencia.
+
 ## 1. Arquitectura y Tecnologías
 - **Lenguaje**: C# (.NET 8.0 SDK).
 - **Target Framework**: `net8.0-windows10.0.19041.0` (compatible con Windows 10 versión 2004+ y Windows 11).
