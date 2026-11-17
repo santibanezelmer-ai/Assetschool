@@ -850,7 +850,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const agentSocket = this.server?.sockets?.sockets?.get(stream.agentSocketId);
       if (agentSocket) {
         agentSocket.emit(PacketType.WEBRTC_OFFER, envelope);
-        agentSocket.emit(PacketType.SIGNAL_SDP_OFFER, envelope);
       }
     } 
     // If sent by Agent -> forward to Teacher
@@ -858,7 +857,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const teacherSocket = this.server?.sockets?.sockets?.get(stream.teacherSocketId);
       if (teacherSocket) {
         teacherSocket.emit(PacketType.WEBRTC_OFFER, envelope);
-        teacherSocket.emit(PacketType.SIGNAL_SDP_OFFER, envelope);
       }
     }
   }
@@ -897,13 +895,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const teacherSocket = this.server?.sockets?.sockets?.get(stream.teacherSocketId);
       if (teacherSocket) {
         teacherSocket.emit(PacketType.WEBRTC_ANSWER, envelope);
-        teacherSocket.emit(PacketType.SIGNAL_SDP_ANSWER, envelope);
       }
     } else if (client.id === stream.teacherSocketId) {
       const agentSocket = this.server?.sockets?.sockets?.get(stream.agentSocketId);
       if (agentSocket) {
         agentSocket.emit(PacketType.WEBRTC_ANSWER, envelope);
-        agentSocket.emit(PacketType.SIGNAL_SDP_ANSWER, envelope);
       }
     }
   }
@@ -940,13 +936,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       const agentSocket = this.server?.sockets?.sockets?.get(stream.agentSocketId);
       if (agentSocket) {
         agentSocket.emit(PacketType.WEBRTC_ICE_CANDIDATE, envelope);
-        agentSocket.emit(PacketType.SIGNAL_ICE_CANDIDATE, envelope);
       }
     } else if (client.id === stream.agentSocketId) {
       const teacherSocket = this.server?.sockets?.sockets?.get(stream.teacherSocketId);
       if (teacherSocket) {
         teacherSocket.emit(PacketType.WEBRTC_ICE_CANDIDATE, envelope);
-        teacherSocket.emit(PacketType.SIGNAL_ICE_CANDIDATE, envelope);
       }
     }
   }
@@ -1151,7 +1145,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
 
     this.emitToSocket(socketId, PacketType.COMMAND_DISPATCH, envelope);
-    this.emitToSocket(socketId, 'COMMAND_DISPATCH', envelope);
     this.logger.log(`Comando ${commandType} enviado a dispositivo ${deviceId} (Socket: ${socketId})`);
     return true;
   }
@@ -1349,7 +1342,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     );
     this.registerPendingRequest('FILE_LIST_DIR_RESULT', requestId, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.FILE_LIST_DIR, envelope);
-    this.emitToSocket(socketId, 'FILE_LIST_DIR', envelope);
     return { success: true };
   }
 
@@ -1394,7 +1386,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       for (const target of scope.targets) {
         this.registerPendingRequest('FILE_SEND_RESULT', transferId, target.deviceId, target.socketId, client.id, TRANSFER_REQUEST_TTL_MS);
         this.emitToSocket(target.socketId, PacketType.FILE_SEND, envelope);
-        this.emitToSocket(target.socketId, 'FILE_SEND', envelope);
         count++;
       }
       await this.auditTeacherAction(client, scope.teacher, scope.teacher.institutionId, 'FILE_SEND', 'CLASSROOM', body.classroomId || null, {
@@ -1411,7 +1402,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       if (!auth.ok) return { success: false, error: auth.error };
       this.registerPendingRequest('FILE_SEND_RESULT', transferId, auth.device.id, auth.agentSocketId!, client.id, TRANSFER_REQUEST_TTL_MS);
       this.emitToSocket(auth.agentSocketId!, PacketType.FILE_SEND, envelope);
-      this.emitToSocket(auth.agentSocketId!, 'FILE_SEND', envelope);
       await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'FILE_SEND', 'DEVICE', auth.device.id, {
         transferId,
         fileName: body.fileName,
@@ -1453,7 +1443,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     );
     this.registerPendingRequest('FILE_COLLECT_RESULT', collectId, auth.device.id, socketId, client.id, TRANSFER_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.FILE_COLLECT, envelope);
-    this.emitToSocket(socketId, 'FILE_COLLECT', envelope);
     await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'FILE_COLLECT', 'DEVICE', auth.device.id, {
       collectId,
       filePath: body.filePath,
@@ -1486,7 +1475,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
     this.registerPendingRequest('PROCESS_LIST_RESULT', undefined, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.PROCESS_LIST_REQUEST, envelope);
-    this.emitToSocket(socketId, 'PROCESS_LIST_REQUEST', envelope);
     return { success: true };
   }
 
@@ -1515,7 +1503,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
     this.registerPendingRequest('KILL_PROCESS_RESULT', undefined, auth.device.id, socketId, client.id, SHORT_REQUEST_TTL_MS);
     this.emitToSocket(socketId, PacketType.KILL_PROCESS, envelope);
-    this.emitToSocket(socketId, 'KILL_PROCESS', envelope);
     await this.auditTeacherAction(client, auth.teacher, auth.device.institutionId, 'PROCESS_KILL', 'DEVICE', auth.device.id, {
       pid: body.pid,
       processName: body.processName,
@@ -1571,7 +1558,6 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       keyText: body.keyText,
     });
     this.emitToSocket(session.agentSocketId, PacketType.REMOTE_INPUT_EVENT, envelope);
-    this.emitToSocket(session.agentSocketId, 'REMOTE_INPUT_EVENT', envelope);
   }
 
   private async getOrStartRemoteControlSession(
