@@ -34,6 +34,29 @@ export function assertAccessToken(decoded: DecodedAccessToken | null | undefined
   }
 }
 
+/**
+ * Current account state from the database (source of truth). When the database
+ * is not available it falls back to the token claim, which is conservative for
+ * the pending-password flag.
+ */
+export async function resolveUserAccountState(
+  db: { isDatabaseReady: boolean; query: (sql: string, params?: any[]) => Promise<{ rows: any[] }> } | undefined,
+  userId: string,
+  claimMustChangePassword: boolean | undefined,
+): Promise<{ active: boolean; mustChangePassword: boolean }> {
+  if (!db || !db.isDatabaseReady) {
+    return { active: true, mustChangePassword: Boolean(claimMustChangePassword) };
+  }
+  const res = await db.query('SELECT is_active, must_change_password FROM users WHERE id = $1', [userId]);
+  if (res.rows.length === 0) {
+    return { active: false, mustChangePassword: true };
+  }
+  return {
+    active: res.rows[0].is_active !== false,
+    mustChangePassword: Boolean(res.rows[0].must_change_password),
+  };
+}
+
 /** Throws when the user must change the password and the route does not allow it. */
 export function assertPasswordChangeNotPending(
   user: { mustChangePassword?: boolean } | null | undefined,

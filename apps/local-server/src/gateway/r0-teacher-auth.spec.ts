@@ -23,6 +23,7 @@ describe('R0 · S9 — Teacher WebSocket authentication', () => {
     process.env.DATABASE_MODE = 'memory_test_only';
     db = new DatabaseService();
     await db.onModuleInit();
+    await db.query(`UPDATE users SET must_change_password = false WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'`);
     await db.query(
       "INSERT INTO institutions (id, code, name, contact_email) VALUES ('bbbbbbbb-0000-0000-0000-00000000000b', 'INST-B', 'Colegio B', 'b@b.edu')",
     );
@@ -55,13 +56,30 @@ describe('R0 · S9 — Teacher WebSocket authentication', () => {
     expect(res.success).toBe(false);
   });
 
-  it('rejects teachers with a pending mandatory password change', async () => {
+  it('rejects teachers with a pending mandatory password change (state read from the database)', async () => {
+    await db.query(`UPDATE users SET must_change_password = true WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'`);
     const gateway = new AgentGateway(db, jwt);
+    // Even a token whose claim says "no change pending" is rejected: the DB is the source of truth.
     const res = await gateway.handleTeacherJoin(socket('t4'), {
-      token: signTeacherToken(jwt, { mustChangePassword: true }),
+      token: signTeacherToken(jwt, { mustChangePassword: false }),
     });
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/PASSWORD_CHANGE_REQUIRED/);
+  });
+
+  it('accepts a teacher right after changing the password, even with the old token (stale claim)', async () => {
+    const gateway = new AgentGateway(db, jwt);
+    const res = await gateway.handleTeacherJoin(socket('t4b'), {
+      token: signTeacherToken(jwt, { mustChangePassword: true }),
+    });
+    expect(res.success).toBe(true);
+  });
+
+  it('rejects deactivated users', async () => {
+    await db.query(`UPDATE users SET is_active = false WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'`);
+    const gateway = new AgentGateway(db, jwt);
+    const res = await gateway.handleTeacherJoin(socket('t4c'), { token: signTeacherToken(jwt) });
+    expect(res.success).toBe(false);
   });
 
   it('rejects joining a classroom of another institution', async () => {

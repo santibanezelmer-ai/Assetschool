@@ -34,7 +34,7 @@ import { DatabaseService } from '../database/database.service';
 import { DeviceStatus, SystemRole, CommandType, CommandStatus } from '@assetschool/shared-types';
 import { randomBytes, randomUUID } from 'crypto';
 import { hasPermission, PermissionKey } from '@assetschool/permissions';
-import { assertAccessToken } from '../auth/token-policy';
+import { assertAccessToken, resolveUserAccountState } from '../auth/token-policy';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -269,7 +269,12 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return { success: false, error: 'Token JWT inválido o expirado' };
     }
 
-    if (decoded.mustChangePassword) {
+    // R0 / S7b: account state from the database (not the possibly stale claim).
+    const account = await resolveUserAccountState(this.databaseService, decoded.sub, decoded.mustChangePassword);
+    if (!account.active) {
+      return { success: false, error: 'Usuario inexistente o desactivado' };
+    }
+    if (account.mustChangePassword) {
       return { success: false, error: 'Debe cambiar su contraseña antes de supervisar el aula (PASSWORD_CHANGE_REQUIRED)' };
     }
 

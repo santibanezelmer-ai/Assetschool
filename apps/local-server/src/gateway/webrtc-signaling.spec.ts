@@ -24,6 +24,8 @@ describe('WebRTC LAN Signaling & Screen Capture Authorization Tests (Phase 02)',
     process.env.DATABASE_MODE = 'memory_test_only';
     dbService = new DatabaseService();
     await dbService.onModuleInit();
+    // Seed teacher modelled as having already changed the mandatory password.
+    await dbService.query(`UPDATE users SET must_change_password = false WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'`);
     gateway = new AgentGateway(dbService, jwtService);
   });
 

@@ -74,6 +74,25 @@ describe('R0 · S7/S7b — Secrets and token policy', () => {
       expect(user.mustChangePassword).toBe(false);
     });
 
+    it('reads the pending-password state from the database, not from the stale claim', async () => {
+      process.env.DATABASE_MODE = 'memory_test_only';
+      const db = new DatabaseService();
+      await db.onModuleInit();
+      const strategy = new JwtStrategy(db);
+
+      await db.query(`UPDATE users SET must_change_password = false WHERE id = $1`, [accessPayload.sub]);
+      const afterChange = await strategy.validate({ ...accessPayload, mustChangePassword: true } as any);
+      expect(afterChange.mustChangePassword).toBe(false);
+
+      await db.query(`UPDATE users SET must_change_password = true WHERE id = $1`, [accessPayload.sub]);
+      const pending = await strategy.validate({ ...accessPayload, mustChangePassword: false } as any);
+      expect(pending.mustChangePassword).toBe(true);
+
+      await db.query(`UPDATE users SET is_active = false WHERE id = $1`, [accessPayload.sub]);
+      await expect(strategy.validate(accessPayload as any)).rejects.toThrow(UnauthorizedException);
+      await db.onModuleDestroy();
+    });
+
     it('rejects refresh tokens used as access tokens', async () => {
       const strategy = new JwtStrategy();
       await expect(

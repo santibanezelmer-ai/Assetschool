@@ -190,6 +190,28 @@ describe('R0 · Integration on real PostgreSQL 16 — two institutions', () => {
       expect((await http('GET', '/api/v1/auth/me', undefined, tokens.adminA.accessToken)).status).toBe(200);
     });
 
+    it('after changing the password the same access token works (no lock-out until re-login)', async () => {
+      // Separate user so the other assertions keep a pending-change user.
+      const hash = await bcrypt.hash(password, 10);
+      await db.query(
+        `INSERT INTO users (id, institution_id, role_id, email, password_hash, first_name, last_name, must_change_password)
+         VALUES ('dddddddd-0000-0000-0000-00000000000d', $1, '33333333-3333-3333-3333-333333333333', 'nuevo@assetschool.lan', $2, 'N', 'D', true)`,
+        [INSTITUTION_A, hash],
+      );
+      const fresh = await login('nuevo@assetschool.lan');
+      expect((await http('GET', '/api/v1/devices', undefined, fresh.accessToken)).status).toBe(403);
+      const changed = await http(
+        'POST',
+        '/api/v1/auth/change-password',
+        { currentPassword: password, newPassword: `Nuev0-${randomBytes(6).toString('hex')}!` },
+        fresh.accessToken,
+      );
+      expect(changed.status).toBe(200);
+      expect((await http('GET', '/api/v1/devices', undefined, fresh.accessToken)).status).toBe(200);
+      const join = await joinTeacher(fresh.accessToken);
+      expect(join.res.success).toBe(true);
+    });
+
     it('a teacher sees only devices of the own institution', async () => {
       const res = await http('GET', '/api/v1/devices', undefined, tokens.teacherA.accessToken);
       expect(res.status).toBe(200);

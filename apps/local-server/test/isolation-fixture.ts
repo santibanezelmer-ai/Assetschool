@@ -67,6 +67,10 @@ export async function buildTwoTenantFixture(db: DatabaseService) {
     [DEVICE_B1, INSTITUTION_B, CLASSROOM_B1],
   );
 
+  // The seed teacher has a pending mandatory password change; the fixture models
+  // a teacher who already changed it (the gateway reads this flag from the DB).
+  await db.query(`UPDATE users SET must_change_password = false WHERE id = 'cccccccc-cccc-cccc-cccc-cccccccccccc'`);
+
   const jwt = createTestJwtService();
   const gateway = new AgentGateway(db, jwt);
 
