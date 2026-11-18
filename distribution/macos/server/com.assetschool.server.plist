@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.assetschool.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <string>dist/main.js</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Library/Application Support/AssetSchool/server</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+        <key>Crashed</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Library/Application Support/AssetSchool/logs/server.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Library/Application Support/AssetSchool/logs/server.stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>NODE_ENV</key>
+        <string>production</string>
+        <key>PORT</key>
+        <string>3000</string>
+        <key>DATABASE_HOST</key>
+        <string>127.0.0.1</string>
+        <key>DATABASE_PORT</key>
+        <string>5432</string>
+        <key>ASSETSCHOOL_SERVER_MODE</key>
+        <string>LOCAL</string>
+    </dict>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>65536</integer>
+    </dict>
+</dict>
+</plist>

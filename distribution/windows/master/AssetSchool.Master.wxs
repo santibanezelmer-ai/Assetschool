@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- AssetSchool Master MSI Installer Definition -->
+  <Product Id="*" 
+           Name="AssetSchool Master (Teacher Suite)" 
+           Language="1033" 
+           Version="1.2.0" 
+           Manufacturer="AssetSchool Inc." 
+           UpgradeCode="7E57C010-57D1-4E88-B391-7C65F8E21010">
+
+    <Package InstallerVersion="500" 
+             Compressed="yes" 
+             InstallScope="perMachine" 
+             Description="AssetSchool Master Teacher Application for Windows" 
+             Comments="LAN-first native multiplatform classroom control suite"/>
+
+    <MajorUpgrade DowngradeErrorMessage="Una versión posterior de AssetSchool Master ya se encuentra instalada en el equipo." 
+                  AllowSameVersionUpgrades="yes" 
+                  Schedule="afterInstallInitialize"/>
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="AssetSchoolFolder" Name="AssetSchool">
+          <Directory Id="INSTALLFOLDER" Name="Master" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="ApplicationProgramsFolder" Name="AssetSchool" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="AssetSchoolDataFolder" Name="AssetSchool">
+          <Directory Id="MASTERDATAFOLDER" Name="Master" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <ComponentGroup Id="MasterComponents" Directory="INSTALLFOLDER">
+      <Component Id="cmp_MasterApp" Guid="7E57C011-57D1-4E88-B391-7C65F8E21011" Win64="yes">
+        <File Id="fil_MasterExe" 
+              Source="$(var.PublishDir)\AssetSchool.Master.exe" 
+              KeyPath="yes">
+          <!-- Start Menu Shortcut -->
+          <Shortcut Id="ApplicationStartMenuShortcut" 
+                    Directory="ApplicationProgramsFolder" 
+                    Name="AssetSchool Master" 
+                    Description="Suite de control y monitoreo docente AssetSchool" 
+                    WorkingDirectory="INSTALLFOLDER" 
+                    Advertise="yes" />
+          <!-- Desktop Shortcut -->
+          <Shortcut Id="ApplicationDesktopShortcut" 
+                    Directory="DesktopFolder" 
+                    Name="AssetSchool Master" 
+                    Description="Suite de control y monitoreo docente AssetSchool" 
+                    WorkingDirectory="INSTALLFOLDER" 
+                    Advertise="yes" />
+        </File>
+        <RemoveFolder Id="CleanUpProgramMenuFolder" Directory="ApplicationProgramsFolder" On="uninstall" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="MasterConfigGroup" Directory="MASTERDATAFOLDER">
+      <Component Id="cmp_MasterConfigDir" Guid="7E57C012-57D1-4E88-B391-7C65F8E21012" Permanent="yes" NeverOverwrite="yes">
+        <CreateFolder>
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Users" GenericRead="yes" GenericWrite="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" 
+                       Key="Software\AssetSchool\Master" 
+                       Name="DataDirectory" 
+                       Type="string" 
+                       Value="[MASTERDATAFOLDER]" 
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <Feature Id="MainFeature" Title="AssetSchool Master" Level="1">
+      <ComponentGroupRef Id="MasterComponents" />
+      <ComponentGroupRef Id="MasterConfigGroup" />
+    </Feature>
+  </Product>
+</Wix>

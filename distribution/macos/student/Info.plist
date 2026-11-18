@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>
+    <string>AssetSchoolAgent</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.assetschool.student</string>
+    <key>CFBundleName</key>
+    <string>AssetSchool Student</string>
+    <key>CFBundleDisplayName</key>
+    <string>AssetSchool Student</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.2.0</string>
+    <key>CFBundleVersion</key>
+    <string>120</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>13.0</string>
+    <key>LSUIElement</key>
+    <true/> <!-- Background agent without dock icon -->
+    <key>NSHighResolutionCapable</key>
+    <true/>
+    <key>NSPrincipalClass</key>
+    <string>NSApplication</string>
+    <!-- Privacy Descriptions for TCC Prompts -->
+    <key>NSScreenCaptureUsageDescription</key>
+    <string>AssetSchool Student requiere acceso a Grabación de Pantalla para permitir la supervisión pedagógica en el laboratorio informático.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>AssetSchool Student requiere permisos de Accesibilidad para permitir el control asistido y bloqueo de pantalla instruido por el docente.</string>
+    <key>NSUserNotificationUsageDescription</key>
+    <string>AssetSchool Student envía notificaciones sobre el inicio de sesión del aula, mensajes y archivos compartidos por el profesor.</string>
+</dict>
+</plist>

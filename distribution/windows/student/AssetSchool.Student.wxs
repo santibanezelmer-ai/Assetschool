@@ -1,0 +1,136 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <!-- AssetSchool Student MSI Installer Definition -->
+  <Product Id="*" 
+           Name="AssetSchool Student Agent" 
+           Language="1033" 
+           Version="1.2.0" 
+           Manufacturer="AssetSchool Inc." 
+           UpgradeCode="7E57C001-57D1-4E88-B391-7C65F8E21001">
+
+    <Package InstallerVersion="500" 
+             Compressed="yes" 
+             InstallScope="perMachine" 
+             Description="AssetSchool Student Classroom Agent &amp; Service" 
+             Comments="LAN-first native multiplatform classroom management agent"/>
+
+    <MajorUpgrade DowngradeErrorMessage="Una versión posterior de AssetSchool Student ya se encuentra instalada en el equipo." 
+                  AllowSameVersionUpgrades="yes" 
+                  Schedule="afterInstallInitialize"/>
+
+    <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
+
+    <!-- Configurable Public Properties for GPO / Intune / CLI Silent Deployment -->
+    <Property Id="SERVER_URL" Value="http://localhost:3000" />
+    <Property Id="INSTITUTION_ID" Value="" />
+    <Property Id="CLASSROOM_ID" Value="" />
+    <Property Id="ENROLLMENT_TOKEN" Value="" />
+    <Property Id="AUTO_START" Value="1" />
+    <Property Id="KEEP_DATA" Value="1" />
+
+    <!-- Directory Structure -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFiles64Folder">
+        <Directory Id="AssetSchoolFolder" Name="AssetSchool">
+          <Directory Id="INSTALLFOLDER" Name="Student">
+            <Directory Id="BinFolder" Name="bin" />
+          </Directory>
+        </Directory>
+      </Directory>
+
+      <!-- Persistent Institutional Config Directory in ProgramData -->
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="AssetSchoolDataFolder" Name="AssetSchool">
+          <Directory Id="DATAFOLDER" Name="Student" />
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Component Group: Windows Service & Session Agent -->
+    <ComponentGroup Id="StudentComponents" Directory="INSTALLFOLDER">
+      <!-- 1. Background Windows Service (Runs as LocalSystem) -->
+      <Component Id="cmp_StudentService" Guid="7E57C002-57D1-4E88-B391-7C65F8E21002" Win64="yes">
+        <File Id="fil_StudentServiceExe" 
+              Source="$(var.PublishDir)\AssetSchool.Student.Service.exe" 
+              KeyPath="yes" />
+
+        <ServiceInstall Id="srv_StudentService"
+                        Name="AssetSchoolStudentService"
+                        DisplayName="AssetSchool Student Background Service"
+                        Description="Servicio residente de supervisión, administración remota y seguridad de AssetSchool."
+                        Type="ownProcess"
+                        Start="auto"
+                        ErrorControl="normal"
+                        Account="LocalSystem"
+                        Vital="yes" />
+
+        <ServiceControl Id="ctl_StudentService"
+                        Name="AssetSchoolStudentService"
+                        Start="install"
+                        Stop="both"
+                        Remove="uninstall"
+                        Wait="yes" />
+      </Component>
+
+      <!-- 2. Interactive Session Agent (Runs inside active Windows Desktop sessions) -->
+      <Component Id="cmp_SessionAgent" Guid="7E57C003-57D1-4E88-B391-7C65F8E21003" Win64="yes">
+        <File Id="fil_SessionAgentExe" 
+              Source="$(var.PublishDir)\AssetSchool.Student.SessionAgent.exe" 
+              KeyPath="yes" />
+
+        <!-- Run Key to ensure interactive agent launches in logged-in user desktop sessions -->
+        <RegistryValue Root="HKLM" 
+                       Key="Software\Microsoft\Windows\CurrentVersion\Run" 
+                       Name="AssetSchoolStudentSessionAgent" 
+                       Type="string" 
+                       Value="&quot;[INSTALLFOLDER]AssetSchool.Student.SessionAgent.exe&quot; --autostart" />
+      </Component>
+
+      <!-- 3. Local Firewall Rules for SFU WebRTC and Agent Signaling -->
+      <Component Id="cmp_FirewallRules" Guid="7E57C004-57D1-4E88-B391-7C65F8E21004" Win64="yes">
+        <RegistryValue Root="HKLM" 
+                       Key="Software\AssetSchool\Student\Firewall" 
+                       Name="Configured" 
+                       Type="integer" 
+                       Value="1" 
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Component Group: Configuration Data in ProgramData -->
+    <ComponentGroup Id="ConfigComponents" Directory="DATAFOLDER">
+      <Component Id="cmp_ConfigDir" Guid="7E57C005-57D1-4E88-B391-7C65F8E21005" Permanent="yes" NeverOverwrite="yes">
+        <CreateFolder>
+          <Permission User="Administrators" GenericAll="yes" />
+          <Permission User="SYSTEM" GenericAll="yes" />
+          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
+        </CreateFolder>
+        <RegistryValue Root="HKLM" 
+                       Key="Software\AssetSchool\Student" 
+                       Name="DataDirectory" 
+                       Type="string" 
+                       Value="[DATAFOLDER]" 
+                       KeyPath="yes" />
+      </Component>
+    </ComponentGroup>
+
+    <!-- Features -->
+    <Feature Id="MainFeature" Title="AssetSchool Student" Level="1">
+      <ComponentGroupRef Id="StudentComponents" />
+      <ComponentGroupRef Id="ConfigComponents" />
+    </Feature>
+
+    <!-- Custom Actions: Pass Properties to Config File on Silent Deployment -->
+    <CustomAction Id="WriteConfigOnInstall" 
+                  Directory="INSTALLFOLDER" 
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$cfg = @{ serverUrl='[SERVER_URL]'; institutionId='[INSTITUTION_ID]'; classroomId='[CLASSROOM_ID]'; enrollmentToken='[ENROLLMENT_TOKEN]' } | ConvertTo-Json; [IO.File]::WriteAllText('[DATAFOLDER]student-config.json', $cfg)&quot;" 
+                  Execute="deferred" 
+                  Return="ignore" 
+                  Impersonate="no" />
+
+    <InstallExecuteSequence>
+      <Custom Action="WriteConfigOnInstall" After="InstallFiles">NOT Installed</Custom>
+    </InstallExecuteSequence>
+
+  </Product>
+</Wix>

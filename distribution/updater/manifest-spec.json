@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "AssetSchoolUpdateManifest",
+  "type": "object",
+  "required": ["version", "channel", "releaseDate", "minServerVersion", "packages", "signature"],
+  "properties": {
+    "version": {
+      "type": "string",
+      "description": "Versión semántica del release (ej: 1.2.0)"
+    },
+    "channel": {
+      "type": "string",
+      "enum": ["stable", "beta"],
+      "description": "Canal de distribución"
+    },
+    "releaseDate": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "minServerVersion": {
+      "type": "string",
+      "description": "Versión mínima del servidor requerida para compatibilidad"
+    },
+    "releaseNotes": {
+      "type": "string",
+      "description": "Notas del release y lista de cambios"
+    },
+    "packages": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["url", "sha256", "sizeBytes"],
+        "properties": {
+          "url": { "type": "string" },
+          "sha256": { "type": "string" },
+          "sizeBytes": { "type": "integer" },
+          "signature": { "type": "string" }
+        }
+      }
+    },
+    "signature": {
+      "type": "string",
+      "description": "Firma digital RSA-SHA256 del manifiesto emitida por la clave privada del vendor"
+    }
+  }
+}
