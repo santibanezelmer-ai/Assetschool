@@ -135,6 +135,10 @@ export class DatabaseService implements OnModuleInit, OnModuleDestroy {
     return this.pool.query(sql, params);
   }
 
+  public getPool(): any {
+    return this.pool;
+  }
+
   /**
    * Inicializa pg-mem exclusivamente para pruebas automatizadas unitarias/e2e.
    * Ejecuta el esquema real 001_initial_schema.sql y 002_seed_data.sql.

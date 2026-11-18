@@ -159,6 +159,38 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   private pendingAgentRequests = new Map<string, PendingAgentRequest>();
   private heartbeatIntervalTimer: NodeJS.Timeout | null = null;
 
+  public getConnectedAgentCount(): number {
+    return this.connectedAgents.size;
+  }
+
+  public getConnectedTeacherCount(): number {
+    return this.connectedTeachers.size;
+  }
+
+  public getAgentsList(): any[] {
+    return Array.from(this.connectedAgents.values()).map(a => ({
+      socketId: a.socketId,
+      deviceId: a.deviceId,
+      hostname: a.hostname,
+      institutionId: a.institutionId,
+      classroomId: a.classroomId,
+      isLocked: a.isLocked,
+      lastHeartbeatAt: a.lastHeartbeatAt,
+    }));
+  }
+
+  public getTeachersList(): any[] {
+    return Array.from(this.connectedTeachers.values()).map(t => ({
+      socketId: t.socketId,
+      userId: t.userId,
+      email: t.email,
+      role: t.role,
+      institutionId: t.institutionId,
+      classroomId: t.classroomId,
+      authenticatedAt: t.authenticatedAt,
+    }));
+  }
+
   constructor(
     private readonly databaseService: DatabaseService,
     @Optional() private readonly jwtService?: JwtService,

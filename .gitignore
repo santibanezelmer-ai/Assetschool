@@ -11,3 +11,6 @@ coverage/
 .env.local
 infrastructure/postgres/data/
 /node_modules
+backups/
+config/
+*.backup.json

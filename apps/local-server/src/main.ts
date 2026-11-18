@@ -2,6 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger } from '@nestjs/common';
 import * as path from 'path';
+import { json, urlencoded } from 'express';
 import { loadLocalEnvFile, requireJwtSecret } from './config/required-env';
 
 async function bootstrap() {
@@ -24,6 +25,9 @@ async function bootstrap() {
   }
 
   const app = await NestFactory.create(AppModule);
+
+  app.use(json({ limit: '50mb' }));
+  app.use(urlencoded({ limit: '50mb', extended: true }));
 
   // Security: Configurable CORS policy for local LAN
   const allowedOrigins = process.env.CORS_ALLOWED_ORIGINS
@@ -50,8 +54,26 @@ async function bootstrap() {
     credentials: true,
   });
 
+  app.enableShutdownHooks();
+
   const port = process.env.PORT || 3000;
   await app.listen(port);
+
+  // Graceful shutdown handling for independent service lifecycle
+  const handleShutdown = async (signal: string) => {
+    logger.log(`Señal de detención recibida (${signal}). Cerrando AssetSchool Server de forma segura...`);
+    try {
+      await app.close();
+      logger.log('AssetSchool Server cerrado con éxito.');
+      process.exit(0);
+    } catch (err: any) {
+      logger.error(`Error durante el cierre del servidor: ${err.message}`);
+      process.exit(1);
+    }
+  };
+
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
 
   logger.log(`================================================================`);
   logger.log(`  AssetSchool Local Server — Core Engine (Phase 01.1 Audited)`);

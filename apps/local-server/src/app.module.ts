@@ -9,10 +9,13 @@ import { AuditModule } from './audit/audit.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { DiscoveryModule } from './discovery/discovery.module';
 import { SfuModule } from './sfu/sfu.module';
+import { ServerIdentityModule } from './identity/server-identity.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
     DatabaseModule,
+    ServerIdentityModule,
     AuthModule,
     DashboardModule,
     DevicesModule,
@@ -22,6 +25,7 @@ import { SfuModule } from './sfu/sfu.module';
     GatewayModule,
     DiscoveryModule,
     SfuModule,
+    AdminModule,
   ],
 })
 export class AppModule {}

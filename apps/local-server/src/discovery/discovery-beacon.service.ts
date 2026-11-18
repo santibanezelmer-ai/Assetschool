@@ -13,16 +13,15 @@ import {
   createEnvelope,
   DiscoveryBeaconPayload,
   ProtocolEnvelope,
-  isDiscoveryBeaconPayload,
 } from '@assetschool/protocol';
 import { DatabaseService } from '../database/database.service';
+import { ServerIdentityService } from '../identity/server-identity.service';
 
 @Injectable()
 export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(DiscoveryBeaconService.name);
   private socket: dgram.Socket | null = null;
   private intervalTimer: NodeJS.Timeout | null = null;
-  private serverId = `srv_${os.hostname().toLowerCase().replace(/[^a-z0-9]/g, '_')}`;
   private serverVersion = '1.0.0';
   private institutionInfo = {
     id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
@@ -33,7 +32,10 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
   private lastBeaconAt: number | null = null;
   private port = Number(process.env.PORT) || 3000;
 
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly identityService: ServerIdentityService,
+  ) {}
 
   async onModuleInit() {
     await this.loadInstitutionInfo();
@@ -55,6 +57,7 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
           code: res.rows[0].code,
           name: res.rows[0].name,
         };
+        this.identityService.setInstitutionId(res.rows[0].id);
       }
     } catch (err) {
       this.logger.warn(
@@ -67,11 +70,19 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
     const interfaces = os.networkInterfaces();
     const results: { address: string; broadcast: string }[] = [];
 
+    // Optional override from environment
+    if (process.env.ANNOUNCED_IP) {
+      results.push({
+        address: process.env.ANNOUNCED_IP,
+        broadcast: '255.255.255.255',
+      });
+      return results;
+    }
+
     for (const [name, addrs] of Object.entries(interfaces)) {
       if (!addrs) continue;
       for (const info of addrs) {
         if (info.family === 'IPv4' && !info.internal) {
-          // Calculate subnet broadcast
           const ipParts = info.address.split('.').map(Number);
           const maskParts = (info.netmask || '255.255.255.0').split('.').map(Number);
           const bcastParts = ipParts.map((part, i) => (part | (~maskParts[i] & 255)) >>> 0);
@@ -89,6 +100,7 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
   }
 
   private getPrimaryHost(): string {
+    if (process.env.ANNOUNCED_IP) return process.env.ANNOUNCED_IP;
     const lans = this.getLanAddresses();
     return lans[0]?.address || '127.0.0.1';
   }
@@ -101,13 +113,26 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
         this.logger.error(`Error en socket de baliza UDP: ${err.message}`, err.stack);
       });
 
-      this.socket.bind(0, () => {
+      // Handle discovery queries from agents/masters on subnets
+      this.socket.on('message', (msg, rinfo) => {
+        try {
+          const str = msg.toString('utf8');
+          if (str.includes('DISCOVERY_QUERY') || str.includes('ASSETSCHOOL_PING')) {
+            this.sendDirectBeacon(rinfo.address, rinfo.port);
+          }
+        } catch {
+          // Ignore malformed packets
+        }
+      });
+
+      this.socket.bind(ASSETSCHOOL_LAN_DISCOVERY_PORT, () => {
         if (!this.socket) return;
         try {
           this.socket.setBroadcast(true);
           const primaryHost = this.getPrimaryHost();
+          const mode = this.identityService.getServerMode().toUpperCase();
           this.logger.log(
-            `Servicio de descubrimiento LAN activo — Broadcast UDP en puerto ${ASSETSCHOOL_LAN_DISCOVERY_PORT} (Host: ${primaryHost}:${this.port}, cada 3s)`,
+            `Descubrimiento LAN activo (Modo ${mode}) — Puerto UDP ${ASSETSCHOOL_LAN_DISCOVERY_PORT} (Host: ${primaryHost}:${this.port}, cada 3s)`,
           );
 
           // Emit immediately, then every 3000ms
@@ -125,38 +150,7 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
   public broadcast() {
     if (!this.socket) return;
 
-    const primaryHost = this.getPrimaryHost();
-    const now = Date.now();
-
-    const payload: DiscoveryBeaconPayload = {
-      serverId: this.serverId,
-      serverVersion: this.serverVersion,
-      protocolVersion: ASSETSCHOOL_PROTOCOL_VERSION,
-      serverHost: primaryHost,
-      httpPort: this.port,
-      wsPort: this.port,
-      wsPath: '/socket.io',
-      wsUrl: `http://${primaryHost}:${this.port}/socket.io`,
-      httpUrl: `http://${primaryHost}:${this.port}/api/v1`,
-      institutionId: this.institutionInfo.id,
-      institutionCode: this.institutionInfo.code,
-      institutionName: this.institutionInfo.name,
-      timestamp: now,
-    };
-
-    if (!isDiscoveryBeaconPayload(payload)) {
-      this.logger.error('Carga útil de baliza no cumple con el esquema DiscoveryBeaconPayload');
-      return;
-    }
-
-    const envelope: ProtocolEnvelope<DiscoveryBeaconPayload> = createEnvelope(
-      PacketType.DISCOVERY_BEACON,
-      this.serverId,
-      'server',
-      payload,
-    );
-
-    const messageBuffer = Buffer.from(JSON.stringify(envelope));
+    const messageBuffer = this.buildBeaconBuffer();
     const destinations = new Set<string>();
 
     destinations.add('255.255.255.255');
@@ -174,11 +168,7 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
           messageBuffer.length,
           ASSETSCHOOL_LAN_DISCOVERY_PORT,
           dest,
-          (err) => {
-            if (err) {
-              // Ignore occasional EHOSTUNREACH / ENETUNREACH in non-routable interfaces
-            }
-          },
+          () => {},
         );
       } catch {
         // Suppress send errors on disabled broadcast routes
@@ -186,7 +176,57 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
     }
 
     this.beaconsSent++;
-    this.lastBeaconAt = now;
+    this.lastBeaconAt = Date.now();
+  }
+
+  public sendDirectBeacon(targetHost: string, targetPort: number) {
+    if (!this.socket) return;
+    const buf = this.buildBeaconBuffer();
+    try {
+      this.socket.send(buf, 0, buf.length, targetPort, targetHost);
+    } catch {
+      // Ignored
+    }
+  }
+
+  private buildBeaconBuffer(): Buffer {
+    const primaryHost = this.getPrimaryHost();
+    const now = Date.now();
+    const serverId = this.identityService.getServerId();
+    const mode = this.identityService.getServerMode();
+    const fingerprint = this.identityService.getFingerprint();
+
+    // Sign identity to prevent spoofing
+    const signPayload = `${serverId}:${primaryHost}:${this.port}:${now}`;
+    const signature = this.identityService.signPayload(signPayload);
+
+    const payload: DiscoveryBeaconPayload & { serverMode: string; fingerprint: string; signature: string } = {
+      serverId,
+      serverVersion: this.serverVersion,
+      protocolVersion: ASSETSCHOOL_PROTOCOL_VERSION,
+      serverHost: primaryHost,
+      httpPort: this.port,
+      wsPort: this.port,
+      wsPath: '/socket.io',
+      wsUrl: `http://${primaryHost}:${this.port}/socket.io`,
+      httpUrl: `http://${primaryHost}:${this.port}/api/v1`,
+      institutionId: this.institutionInfo.id,
+      institutionCode: this.institutionInfo.code,
+      institutionName: this.institutionInfo.name,
+      timestamp: now,
+      serverMode: mode,
+      fingerprint,
+      signature,
+    };
+
+    const envelope = createEnvelope(
+      PacketType.DISCOVERY_BEACON,
+      serverId,
+      'server',
+      payload,
+    );
+
+    return Buffer.from(JSON.stringify(envelope));
   }
 
   public stopBeacon() {
@@ -209,7 +249,9 @@ export class DiscoveryBeaconService implements OnModuleInit, OnModuleDestroy {
     return {
       active: this.socket !== null && this.intervalTimer !== null,
       port: ASSETSCHOOL_LAN_DISCOVERY_PORT,
-      serverId: this.serverId,
+      serverId: this.identityService.getServerId(),
+      serverMode: this.identityService.getServerMode(),
+      fingerprint: this.identityService.getFingerprint(),
       serverVersion: this.serverVersion,
       protocolVersion: ASSETSCHOOL_PROTOCOL_VERSION,
       institution: this.institutionInfo,
