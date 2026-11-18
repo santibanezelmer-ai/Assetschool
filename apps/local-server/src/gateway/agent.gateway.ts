@@ -48,6 +48,7 @@ interface AuthenticatedAgentSession {
   authenticatedAt: number;
   lastHeartbeatAt: number;
   isCapturing?: boolean;
+  isLocked?: boolean;
   /** R0 / S4: unknown or unverifiable agents are kept connected but inert. */
   quarantined?: boolean;
 }
@@ -194,6 +195,16 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
             [DeviceStatus.OFFLINE, agentSession.deviceId],
           ).catch(() => {});
         }
+        if (agentSession.institutionId) {
+          const offlinePayload = {
+            id: agentSession.deviceId,
+            deviceId: agentSession.deviceId,
+            status: DeviceStatus.OFFLINE,
+            isLocked: false,
+          };
+          this.emitToInstitution(agentSession.institutionId, 'DEVICE_STATUS_CHANGED', offlinePayload);
+          this.emitToInstitution(agentSession.institutionId, 'DEVICE_STATUS_CHANGE', offlinePayload);
+        }
       }
       this.connectedAgents.delete(client.id);
       return;
@@ -333,6 +344,51 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     if (typeof client?.emit === 'function') {
       client.emit('TEACHER_JOIN_SUCCESS', { success: true, userId, institutionId });
     }
+
+    // Send classroom devices snapshot immediately upon joining
+    if (this.databaseService.isDatabaseReady) {
+      try {
+        let queryStr = `
+          SELECT d.id, d.hostname, d.mac_address, d.local_ip, d.os_type, d.os_version, d.status, d.is_revoked, d.current_classroom_id
+          FROM devices d
+          WHERE d.institution_id = $1 AND d.is_revoked = false
+        `;
+        const params: any[] = [institutionId];
+        if (body.classroomId) {
+          queryStr += ' AND d.current_classroom_id = $2';
+          params.push(body.classroomId);
+        }
+        queryStr += ' ORDER BY d.hostname ASC';
+        const res = await this.databaseService.query(queryStr, params);
+
+        const devices = res.rows.map((row: any) => {
+          const socketId = this.deviceToAgentSocket.get(row.id);
+          const isConnected = !!socketId && !!this.connectedAgents.get(socketId);
+          const agentSession = socketId ? this.connectedAgents.get(socketId) : null;
+          const isLocked = agentSession?.isLocked ?? (row.status === 'locked');
+          return {
+            id: row.id,
+            deviceId: row.id,
+            hostname: row.hostname,
+            macAddress: row.mac_address,
+            localIp: row.local_ip,
+            osType: row.os_type,
+            osVersion: row.os_version,
+            status: isConnected ? (isLocked ? 'locked' : 'online') : 'offline',
+            isLocked: isLocked,
+            classroomId: row.current_classroom_id,
+          };
+        });
+
+        if (typeof client?.emit === 'function') {
+          client.emit('CLASSROOM_SNAPSHOT', devices);
+          client.emit('DEVICE_LIST', devices);
+        }
+      } catch (err: any) {
+        this.logger.error(`Error al obtener snapshot de aula: ${err?.message}`);
+      }
+    }
+
     return { success: true };
   }
 
@@ -398,11 +454,13 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     let institutionId: string | undefined;
     let quarantineReason: string | null = 'Dispositivo no registrado';
 
+    let deviceClassroomId: string | undefined;
+
     if (!this.databaseService.isDatabaseReady) {
       quarantineReason = 'Base de datos no disponible: identidad no verificable';
     } else {
       const devRes = await this.databaseService.query(
-        'SELECT id, is_revoked, institution_id FROM devices WHERE LOWER(mac_address) = LOWER($1)',
+        'SELECT id, is_revoked, institution_id, current_classroom_id FROM devices WHERE LOWER(mac_address) = LOWER($1)',
         [payload.macAddress],
       );
 
@@ -411,6 +469,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         this.logger.warn(`Agente en cuarentena: ${quarantineReason} (${payload.macAddress})`);
       } else if (devRes.rows.length === 1) {
         const device = devRes.rows[0];
+        deviceClassroomId = device.current_classroom_id;
         if (device.is_revoked) {
           this.logger.warn(`Conexión rechazada: El dispositivo MAC ${payload.macAddress} está REVOCADO`);
           return this.rejectAgentHello(client, 'Dispositivo revocado por el administrador');
@@ -480,6 +539,20 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     if (isEnrolled && deviceId) {
       this.deviceToAgentSocket.set(deviceId, client.id);
       this.logger.log(`Handshake exitoso: ${payload.hostname} (${payload.osType}) - Token emitido.`);
+      if (institutionId) {
+        const statusPayload = {
+          id: deviceId,
+          deviceId,
+          hostname: payload.hostname,
+          localIp: payload.localIp || '127.0.0.1',
+          osType: payload.osType,
+          status: 'online',
+          isLocked: false,
+          classroomId: deviceClassroomId,
+        };
+        this.emitToInstitution(institutionId, 'DEVICE_STATUS_CHANGED', statusPayload);
+        this.emitToInstitution(institutionId, 'DEVICE_STATUS_CHANGE', statusPayload);
+      }
     } else {
       this.logger.warn(
         `Agente en CUARENTENA: ${payload.hostname} (MAC ${payload.macAddress}, ${client.handshake?.address}) — ${quarantineReason}. ` +
@@ -1158,6 +1231,28 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     }
     // R0 / S8: status changes are only announced to the device's institution.
     this.emitToInstitution(institutionId, 'DEVICE_STATUS_CHANGED', { deviceId, status });
+    this.emitToInstitution(institutionId, 'DEVICE_STATUS_CHANGE', { deviceId, status });
+    this.emitToInstitution(institutionId, 'LOCK_STATUS_CHANGE', {
+      deviceId,
+      locked: status === DeviceStatus.LOCKED,
+    });
+  }
+
+  @SubscribeMessage('DEVICE_THUMBNAIL')
+  handleDeviceThumbnail(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: any,
+  ) {
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent || !agent.deviceId || agent.quarantined || !agent.institutionId) {
+      return;
+    }
+    const payload = body?.payload || body;
+    this.emitToInstitution(agent.institutionId, 'DEVICE_THUMBNAIL', {
+      deviceId: agent.deviceId,
+      thumbnailBase64: payload?.thumbnailBase64,
+      timestamp: payload?.timestamp || Date.now(),
+    });
   }
 
   @SubscribeMessage('TEACHER_LOCK_DEVICE')

@@ -3,12 +3,19 @@ import AppKit
 
 /// Native macOS Fullscreen Pedagogical Lock Curtain (Pantalla de Pausa Pedagógica).
 /// Displays an institutional lock overlay and suppresses keyboard/mouse input while active.
+/// Includes safety watchdogs, network disconnect auto-recovery, and administrative emergency release.
 public class LockCurtainManager {
     public static let shared = LockCurtainManager()
     
     private var lockWindows: [NSWindow] = []
     private var eventMonitor: Any? = nil
+    private var watchdogTimer: Timer?
+    private var disconnectRecoveryTimer: Timer?
     public private(set) var isLocked: Bool = false
+    
+    // Safety thresholds
+    private let maxLockDurationSeconds: TimeInterval = 1800.0 // 30 minutes max safety limit
+    private let disconnectGracePeriodSeconds: TimeInterval = 30.0 // Auto-unlock 30s after connection drop
     
     public init() {}
     
@@ -40,12 +47,30 @@ public class LockCurtainManager {
                 self.lockWindows.append(window)
             }
             
-            // Block local keyboard and mouse events
+            // Block local keyboard and mouse events, with administrative bypass shortcut (Cmd+Option+Shift+U)
             self.eventMonitor = NSEvent.addLocalMonitorForEvents(
                 matching: [.keyDown, .keyUp, .leftMouseDown, .rightMouseDown, .otherMouseDown, .scrollWheel]
-            ) { event in
-                // Intercept and suppress all inputs while locked
+            ) { [weak self] event in
+                guard let self = self, self.isLocked else { return event }
+
+                // Check for administrative emergency unlock shortcut: Cmd + Option + Shift + U
+                if event.type == .keyDown {
+                    let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+                    if flags.contains([.command, .option, .shift]) && event.charactersIgnoringModifiers?.lowercased() == "u" {
+                        print("[PAUSA PEDAGÓGICA] 🛡️ Atajo de recuperación administrativa detectado (Cmd+Opt+Shift+U).")
+                        self.hide()
+                        return nil
+                    }
+                }
+                // Intercept and suppress all other inputs while locked
                 return nil
+            }
+            
+            // 1. Safety Watchdog Timer: prevents permanent locking in case of teacher app crash
+            self.watchdogTimer?.invalidate()
+            self.watchdogTimer = Timer.scheduledTimer(withTimeInterval: self.maxLockDurationSeconds, repeats: false) { [weak self] _ in
+                print("[PAUSA PEDAGÓGICA] ⏱️ Límite máximo de bloqueo alcanzado (30 min). Desbloqueando por seguridad.")
+                self?.hide()
             }
             
             print("==========================================================================")
@@ -53,7 +78,7 @@ public class LockCurtainManager {
             if let msg = message, !msg.isEmpty {
                 print("[MENSAJE DEL DOCENTE] \"\(msg)\"")
             }
-            print("[ENTRADA] Teclado y mouse inhibidos.")
+            print("[SEGURIDAD] Watchdog activo (30m). Atajo de desbloqueo admin: Cmd+Opt+Shift+U")
             print("==========================================================================")
         }
     }
@@ -65,6 +90,11 @@ public class LockCurtainManager {
             
             self.isLocked = false
             NSCursor.unhide()
+            
+            self.watchdogTimer?.invalidate()
+            self.watchdogTimer = nil
+            self.disconnectRecoveryTimer?.invalidate()
+            self.disconnectRecoveryTimer = nil
             
             if let monitor = self.eventMonitor {
                 NSEvent.removeMonitor(monitor)
@@ -79,6 +109,34 @@ public class LockCurtainManager {
             print("==========================================================================")
             print("[PAUSA PEDAGÓGICA] 🟢 PANTALLA DESBLOQUEADA. Control restaurado al estudiante.")
             print("==========================================================================")
+        }
+    }
+
+    /// Called by GatewayClient when WebSocket connection to local-server is lost while locked.
+    /// Initiates a grace period countdown to restore control if the server went down.
+    public func onGatewayDisconnected() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isLocked else { return }
+            print("[PAUSA PEDAGÓGICA] ⚠️ Conexión perdida con el aula mientras la pantalla está bloqueada.")
+            print("[PAUSA PEDAGÓGICA] ⏱️ Iniciando temporizador de recuperación de \(Int(self.disconnectGracePeriodSeconds))s...")
+
+            self.disconnectRecoveryTimer?.invalidate()
+            self.disconnectRecoveryTimer = Timer.scheduledTimer(withTimeInterval: self.disconnectGracePeriodSeconds, repeats: false) { [weak self] _ in
+                print("[PAUSA PEDAGÓGICA] 🔓 Servidor inaccesible tras periodo de gracia. Desbloqueo automático de emergencia ejecutado.")
+                self?.hide()
+            }
+        }
+    }
+
+    /// Called by GatewayClient when connection to local-server is re-established.
+    public func onGatewayReconnected() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self else { return }
+            if self.disconnectRecoveryTimer != nil {
+                print("[PAUSA PEDAGÓGICA] 🟢 Conexión reestablecida con el servidor. Temporizador de desconexión cancelado.")
+                self.disconnectRecoveryTimer?.invalidate()
+                self.disconnectRecoveryTimer = nil
+            }
         }
     }
     

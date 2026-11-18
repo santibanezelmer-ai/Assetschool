@@ -43,6 +43,11 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
         webSocketTask = nil
         isConnected = false
+        ThumbnailCaptureService.shared.stop()
+        LockCurtainManager.shared.onGatewayDisconnected()
+        CaptureIndicatorWindow.shared.hide()
+        TeacherBroadcastManager.shared.stopBroadcast()
+        RemoteInputService.shared.endRemoteControl()
     }
     
     private func listenForMessages() {
@@ -64,6 +69,11 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
             case .failure(let error):
                 print("[GATEWAY CLIENT ERROR] WebSocket error: \(error.localizedDescription)")
                 self.isConnected = false
+                ThumbnailCaptureService.shared.stop()
+                LockCurtainManager.shared.onGatewayDisconnected()
+                CaptureIndicatorWindow.shared.hide()
+                TeacherBroadcastManager.shared.stopBroadcast()
+                RemoteInputService.shared.endRemoteControl()
             }
         }
     }
@@ -158,9 +168,21 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         switch eventName {
         case "SERVER_HELLO_ACK", "server:hello_ack":
             print("[GATEWAY CLIENT] Handshake confirmado por el servidor (SERVER_HELLO_ACK). Dispositivo listo.")
+            LockCurtainManager.shared.onGatewayReconnected()
+            // Iniciar captura periódica de miniaturas ScreenCaptureKit para la consola docente
+            ThumbnailCaptureService.shared.onThumbnailGenerated = { [weak self] b64 in
+                guard let self = self, self.isConnected else { return }
+                self.sendEvent(name: "DEVICE_THUMBNAIL", payload: [
+                    "deviceId": self.deviceId,
+                    "thumbnailBase64": b64,
+                    "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+                ])
+            }
+            ThumbnailCaptureService.shared.start(intervalSeconds: 3.0)
             
         case "SCREEN_CAPTURE_START", "screen:capture:start":
             print("[GATEWAY CLIENT] Solicitud de supervisión SCREEN_CAPTURE_START recibida desde la consola docente!")
+            CaptureIndicatorWindow.shared.showSupervision(teacherName: "el Docente")
             handleStartCapture(envelope: envelope, payload: payload)
             
         case "WEBRTC_ANSWER", "SIGNAL_SDP_ANSWER", "webrtc:answer":
@@ -187,6 +209,7 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         case "SCREEN_CAPTURE_STOP", "screen:capture:stop":
             print("[GATEWAY CLIENT] Comando SCREEN_CAPTURE_STOP recibido. Deteniendo transmisión...")
             webrtcEngine.close()
+            CaptureIndicatorWindow.shared.hide()
             self.currentSessionId = ""
             self.onStreamStopped?()
 
@@ -241,10 +264,15 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
 
         case "TEACHER_BROADCAST_START":
             let teacher = payload?["teacherName"] as? String ?? "el Profesor"
-            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente iniciada por \(teacher)")
+            let mode = payload?["mode"] as? String ?? "fullscreen"
+            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente iniciada por \(teacher) (Modo: \(mode))")
+            TeacherBroadcastManager.shared.startBroadcast(teacherName: teacher, mode: mode)
+            CaptureIndicatorWindow.shared.showSupervision(teacherName: teacher)
 
         case "TEACHER_BROADCAST_STOP":
             print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente finalizada.")
+            TeacherBroadcastManager.shared.stopBroadcast()
+            CaptureIndicatorWindow.shared.hide()
             
         default:
             break
@@ -422,8 +450,30 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         let fileName = (payload["fileName"] as? String) ?? "archivo_recibido.dat"
         let base64Content = (payload["fileContentBase64"] as? String) ?? ""
         let targetDir = payload["targetDir"] as? String
+        let expectedSha256 = payload["sha256"] as? String
+        let chunkIndex = payload["chunkIndex"] as? Int
+        let totalChunks = payload["totalChunks"] as? Int
 
-        let result = FileManagerService.shared.saveIncomingFile(fileName: fileName, base64Content: base64Content, targetDir: targetDir)
+        let result: (success: Bool, savedPath: String?, sha256: String?, error: String?)
+        if let idx = chunkIndex, let total = totalChunks, total > 1 {
+            let chunkRes = FileManagerService.shared.saveFileChunk(
+                transferId: transferId,
+                fileName: fileName,
+                chunkIndex: idx,
+                totalChunks: total,
+                base64Chunk: base64Content,
+                expectedSha256: expectedSha256,
+                targetDir: targetDir
+            )
+            result = (chunkRes.completed, chunkRes.savedPath, chunkRes.sha256, chunkRes.error)
+        } else {
+            result = FileManagerService.shared.saveIncomingFile(
+                fileName: fileName,
+                base64Content: base64Content,
+                targetDir: targetDir,
+                expectedSha256: expectedSha256
+            )
+        }
 
         var responsePayload: [String: Any] = [
             "transferId": transferId,
@@ -432,6 +482,9 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         ]
         if let path = result.savedPath {
             responsePayload["savedPath"] = path
+        }
+        if let hash = result.sha256 {
+            responsePayload["sha256"] = hash
         }
         if let err = result.error {
             responsePayload["error"] = err
@@ -462,6 +515,9 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
             "fileSizeBytes": result.size,
             "success": result.success
         ]
+        if let hash = result.sha256 {
+            responsePayload["sha256"] = hash
+        }
         if let content = result.base64Content {
             responsePayload["fileContentBase64"] = content
         }
@@ -528,14 +584,15 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
 
     // MARK: - Interactive Remote Input Handler
     private func handleRemoteInputEvent(payload: [String: Any]?) {
-        guard let payload = payload else { return }
-        let type = (payload["type"] as? String) ?? "mouseMove"
-        let x = payload["x"] as? Double
-        let y = payload["y"] as? Double
-        let button = payload["button"] as? String
-        let keyCodeVal = payload["keyCode"] as? Int
+        guard let p = payload else { return }
+        let dict = (p["input"] as? [String: Any]) ?? p
+        let type = (dict["type"] as? String) ?? "mouseMove"
+        let x = dict["x"] as? Double
+        let y = dict["y"] as? Double
+        let button = dict["button"] as? String
+        let keyCodeVal = dict["keyCode"] as? Int
         let keyCode = keyCodeVal != nil ? UInt16(keyCodeVal!) : nil
-        let keyText = payload["keyText"] as? String
+        let keyText = dict["keyText"] as? String
 
         RemoteInputService.shared.handleRemoteInput(
             type: type,

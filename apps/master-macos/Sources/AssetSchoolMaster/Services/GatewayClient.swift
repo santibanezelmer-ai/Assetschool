@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 public class MasterGatewayClient: ObservableObject {
     public static let shared = MasterGatewayClient()
@@ -22,8 +23,45 @@ public class MasterGatewayClient: ObservableObject {
     public func connect(host: String = "127.0.0.1", port: Int = 3000, jwtToken: String? = nil) {
         self.serverHost = host
         self.serverPort = port
-        self.token = jwtToken
 
+        if let token = jwtToken {
+            self.token = token
+            self.initiateWebSocketConnection(host: host, port: port, token: token)
+        } else {
+            loginAndConnect(host: host, port: port)
+        }
+    }
+
+    private func loginAndConnect(host: String, port: Int) {
+        guard let loginUrl = URL(string: "http://\(host):\(port)/api/v1/auth/login") else { return }
+        var req = URLRequest(url: loginUrl)
+        req.httpMethod = "POST"
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        let body = ["email": "admin@assetschool.lan", "password": "Admin123!*"]
+        req.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        statusMessage = "Autenticando credenciales docentes..."
+        session.dataTask(with: req) { [weak self] data, response, error in
+            guard let self = self else { return }
+            if let data = data,
+               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let token = json["accessToken"] as? String {
+                self.token = token
+                DispatchQueue.main.async {
+                    self.log("Docente autenticado exitosamente mediante JWT")
+                }
+                self.initiateWebSocketConnection(host: host, port: port, token: token)
+            } else {
+                DispatchQueue.main.async {
+                    self.statusMessage = "Fallo de autenticación con el servidor"
+                    self.log("No se pudo iniciar sesión en \(loginUrl)")
+                }
+                self.initiateWebSocketConnection(host: host, port: port, token: nil)
+            }
+        }.resume()
+    }
+
+    private func initiateWebSocketConnection(host: String, port: Int, token: String?) {
         guard let url = URL(string: "ws://\(host):\(port)/socket.io/?EIO=4&transport=websocket") else {
             statusMessage = "URL inválida"
             return
@@ -34,7 +72,7 @@ public class MasterGatewayClient: ObservableObject {
         log("Conectando a \(url.absoluteString)")
 
         var request = URLRequest(url: url)
-        if let token = jwtToken {
+        if let token = token {
             request.addValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -124,7 +162,7 @@ public class MasterGatewayClient: ObservableObject {
                 if array.count > 1, let payload = array[1] as? [[String: Any]] {
                     self.updateDeviceList(payload)
                 }
-            } else if eventName == "DEVICE_STATUS_CHANGE" {
+            } else if eventName == "DEVICE_STATUS_CHANGE" || eventName == "DEVICE_STATUS_CHANGED" {
                 if array.count > 1, let payload = array[1] as? [String: Any] {
                     self.updateSingleDevice(payload)
                 }
@@ -135,6 +173,16 @@ public class MasterGatewayClient: ObservableObject {
                     if let dev = self.devices.first(where: { $0.id == deviceId }) {
                         dev.isLocked = locked
                         dev.status = locked ? .locked : .online
+                    }
+                }
+            } else if eventName == "DEVICE_THUMBNAIL" {
+                if array.count > 1, let payload = array[1] as? [String: Any],
+                   let deviceId = payload["deviceId"] as? String,
+                   let b64 = payload["thumbnailBase64"] as? String,
+                   let data = Data(base64Encoded: b64),
+                   let image = NSImage(data: data) {
+                    if let dev = self.devices.first(where: { $0.id == deviceId }) {
+                        dev.thumbnail = image
                     }
                 }
             }
@@ -176,7 +224,7 @@ public class MasterGatewayClient: ObservableObject {
     }
 
     private func joinClassroom() {
-        var payload: [String: Any] = ["classroomId": "01010101-0101-0101-0101-010101010101"]
+        var payload: [String: Any] = ["classroomId": "d1111111-1111-1111-1111-111111111111"]
         if let t = token {
             payload["token"] = t
         }

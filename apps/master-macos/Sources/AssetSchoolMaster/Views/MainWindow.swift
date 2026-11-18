@@ -487,20 +487,39 @@ struct DeviceInspectionSheet: View {
             .padding()
             .background(Color(NSColor.windowBackgroundColor))
 
-            ZStack {
-                Color.black
-                if let thumb = device.thumbnail {
-                    Image(nsImage: thumb)
-                        .resizable()
-                        .scaledToFit()
-                } else {
-                    VStack(spacing: 8) {
-                        ProgressView()
-                        Text("Estableciendo enlace WebRTC 1080p con \(device.hostname)...")
-                            .font(.caption)
-                            .foregroundColor(.gray)
+            GeometryReader { geo in
+                ZStack {
+                    Color.black
+
+                    if let thumb = device.thumbnail {
+                        Image(nsImage: thumb)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        VStack(spacing: 8) {
+                            ProgressView()
+                            Text("Recibiendo señal de video en vivo de \(device.hostname)...")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
                     }
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onEnded { value in
+                            let normX = max(0.0, min(1.0, Double(value.location.x / geo.size.width)))
+                            let normY = max(0.0, min(1.0, Double(value.location.y / geo.size.height)))
+                            MasterGatewayClient.shared.sendRemoteInput(
+                                deviceId: device.id,
+                                type: "click",
+                                x: normX,
+                                y: normY,
+                                button: "left"
+                            )
+                        }
+                )
             }
             .frame(minWidth: 700, minHeight: 450)
 

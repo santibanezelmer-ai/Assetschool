@@ -2,14 +2,50 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+/// Native macOS Remote Input Injection Service.
+/// Accurately maps normalized teacher viewport coordinates (0.0 to 1.0) into
+/// local macOS display coordinates and injects mouse and keyboard events via CoreGraphics CGEvent.
+/// Checks accessibility TCC privileges and activates visible privacy notifications.
 public final class RemoteInputService {
     public static let shared = RemoteInputService()
+    
+    public private(set) var isRemoteControlActive: Bool = false
+    private var idleTimer: Timer?
     
     private init() {}
     
     /// Checks whether the agent has macOS Accessibility (TCC) privileges to inject input events
     public var isAccessibilityTrusted: Bool {
         return AXIsProcessTrusted()
+    }
+
+    /// Explicitly activates a remote control session and raises privacy indicator
+    public func startRemoteControl(teacherName: String = "el Docente") {
+        DispatchQueue.main.async { [weak self] in
+            self?.isRemoteControlActive = true
+            CaptureIndicatorWindow.shared.showRemoteControl(teacherName: teacherName)
+            self?.resetIdleTimer()
+        }
+    }
+
+    /// Ends remote control session and hides privacy indicator
+    public func endRemoteControl() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.isRemoteControlActive else { return }
+            self.isRemoteControlActive = false
+            self.idleTimer?.invalidate()
+            self.idleTimer = nil
+            CaptureIndicatorWindow.shared.hide()
+            print("[REMOTE INPUT] Sesión de control remoto finalizada.")
+        }
+    }
+
+    private func resetIdleTimer() {
+        idleTimer?.invalidate()
+        // If no input received for 10 seconds, return indicator to idle
+        idleTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: false) { [weak self] _ in
+            self?.endRemoteControl()
+        }
     }
     
     /// Process incoming remote input event from teacher console
@@ -18,13 +54,24 @@ public final class RemoteInputService {
             print("[REMOTE INPUT WARNING] Evento descartado: El agente no tiene permisos de Accesibilidad TCC otorgados en Preferencias del Sistema -> Privacidad y Seguridad -> Accesibilidad.")
             return
         }
+
+        DispatchQueue.main.async { [weak self] in
+            self?.startRemoteControl()
+        }
         
-        let screen = NSScreen.main?.frame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        // Primary display resolution
+        let primaryScreen = NSScreen.main ?? NSScreen.screens.first
+        let screenWidth = primaryScreen?.frame.width ?? 1920
+        let screenHeight = primaryScreen?.frame.height ?? 1080
         
-        // Calculate absolute point on primary display
-        let posX = CGFloat(x ?? 0.5) * screen.width
-        let posY = CGFloat(y ?? 0.5) * screen.height
-        let targetPoint = CGPoint(x: posX, y: posY)
+        // Normalized top-left coordinates clamped between 0.0 and 1.0
+        let normX = max(0.0, min(1.0, x ?? 0.5))
+        let normY = max(0.0, min(1.0, y ?? 0.5))
+        
+        // CoreGraphics global display coordinates: (0,0) is top-left
+        let targetX = CGFloat(normX) * screenWidth
+        let targetY = CGFloat(normY) * screenHeight
+        let targetPoint = CGPoint(x: targetX, y: targetY)
         
         switch type {
         case "mouseMove":
