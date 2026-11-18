@@ -273,4 +273,258 @@ export class DevicesService {
       reason,
     };
   }
+
+  async updateInventory(
+    id: string,
+    hardware: { deviceName?: string; processor?: string; ramMb?: number; storageGb?: number },
+    institutionId?: string
+  ) {
+    await this.findOne(id, institutionId);
+
+    const res = await this.databaseService.query(
+      `UPDATE devices SET
+        device_name = COALESCE($1, device_name),
+        processor = COALESCE($2, processor),
+        ram_mb = COALESCE($3, ram_mb),
+        storage_gb = COALESCE($4, storage_gb),
+        updated_at = NOW()
+       WHERE id = $5
+       RETURNING *;`,
+      [
+        hardware.deviceName ? hardware.deviceName.trim() : null,
+        hardware.processor ? hardware.processor.trim() : null,
+        hardware.ramMb || null,
+        hardware.storageGb || null,
+        id,
+      ]
+    );
+
+    return res.rows[0];
+  }
+
+  async reassign(
+    id: string,
+    assignment: { classroomId?: string | null; studentId?: string | null },
+    institutionId?: string
+  ) {
+    const device = await this.findOne(id, institutionId);
+
+    // If assigning student, update student_device_history
+    if (assignment.studentId !== undefined && assignment.studentId !== device.current_student_id) {
+      if (device.current_student_id) {
+        await this.databaseService.query(
+          `UPDATE student_device_history SET unassigned_at = NOW() 
+           WHERE device_id = $1 AND student_id = $2 AND unassigned_at IS NULL;`,
+          [id, device.current_student_id]
+        );
+        await this.databaseService.query('UPDATE students SET assigned_device_id = NULL WHERE id = $1;', [device.current_student_id]);
+      }
+
+      if (assignment.studentId) {
+        await this.databaseService.query('UPDATE students SET assigned_device_id = $1 WHERE id = $2;', [id, assignment.studentId]);
+        await this.databaseService.query(
+          `INSERT INTO student_device_history (institution_id, student_id, device_id, assigned_by, notes)
+           VALUES ($1, $2, $3, $4, $5);`,
+          [device.institution_id, assignment.studentId, id, 'Administrator', 'Reasignación de inventario']
+        );
+      }
+    }
+
+    const res = await this.databaseService.query(
+      `UPDATE devices SET
+        current_classroom_id = $1,
+        current_student_id = $2,
+        updated_at = NOW()
+       WHERE id = $3
+       RETURNING *;`,
+      [
+        assignment.classroomId !== undefined ? assignment.classroomId : device.current_classroom_id,
+        assignment.studentId !== undefined ? assignment.studentId : device.current_student_id,
+        id,
+      ]
+    );
+
+    return res.rows[0];
+  }
+
+  async approveDevice(id: string, institutionId?: string) {
+    await this.findOne(id, institutionId);
+    const res = await this.databaseService.query(
+      `UPDATE devices SET is_pending_approval = false, updated_at = NOW() WHERE id = $1 RETURNING *;`,
+      [id]
+    );
+    return res.rows[0];
+  }
+
+  async reEnrollDevice(id: string, institutionId?: string) {
+    await this.findOne(id, institutionId);
+    const res = await this.databaseService.query(
+      `UPDATE devices 
+       SET is_revoked = false, revocation_reason = null, is_pending_approval = false, updated_at = NOW() 
+       WHERE id = $1 RETURNING *;`,
+      [id]
+    );
+    return res.rows[0];
+  }
+
+  // --------------------------------------------------------------------------
+  // ENROLLMENT TOKENS
+  // --------------------------------------------------------------------------
+  async createEnrollmentToken(
+    institutionId: string,
+    options: { classroomId?: string; label?: string; maxUses?: number; expiresInHours?: number },
+    createdBy: string
+  ) {
+    const token = 'ENROLL-' + randomUUID().substring(0, 8).toUpperCase() + '-' + randomUUID().substring(0, 8).toUpperCase();
+    const hours = options.expiresInHours || 24;
+    const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
+
+    const res = await this.databaseService.query(
+      `INSERT INTO enrollment_tokens (
+        institution_id, classroom_id, token, label, max_uses, expires_at, created_by
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING *;`,
+      [
+        institutionId,
+        options.classroomId || null,
+        token,
+        options.label || 'Token de Enrolamiento Masivo',
+        options.maxUses || 50,
+        expiresAt,
+        createdBy,
+      ]
+    );
+
+    return res.rows[0];
+  }
+
+  async listEnrollmentTokens(institutionId?: string) {
+    let sql = `SELECT * FROM enrollment_tokens WHERE 1=1`;
+    const params: any[] = [];
+    if (institutionId) {
+      params.push(institutionId);
+      sql += ` AND institution_id = $${params.length}`;
+    }
+    sql += ' ORDER BY created_at DESC;';
+    const res = await this.databaseService.query(sql, params);
+    return res.rows;
+  }
+
+  async revokeEnrollmentToken(tokenId: string, institutionId?: string) {
+    let sql = 'UPDATE enrollment_tokens SET is_revoked = true WHERE id = $1';
+    const params: any[] = [tokenId];
+    if (institutionId) {
+      params.push(institutionId);
+      sql += ' AND institution_id = $2';
+    }
+    sql += ' RETURNING *;';
+    const res = await this.databaseService.query(sql, params);
+    if (res.rows.length === 0) throw new NotFoundException('Token no encontrado');
+    return res.rows[0];
+  }
+
+  async enrollWithToken(tokenStr: string, agentData: {
+    hostname: string;
+    macAddress: string;
+    localIp: string;
+    osType: string;
+    osVersion: string;
+    architecture: string;
+    processor?: string;
+    ramMb?: number;
+    storageGb?: number;
+  }) {
+    const tokenRes = await this.databaseService.query(
+      `SELECT * FROM enrollment_tokens WHERE token = $1;`,
+      [tokenStr.trim()]
+    );
+
+    if (tokenRes.rows.length === 0) {
+      throw new BadRequestException('Token de enrolamiento inválido');
+    }
+
+    const t = tokenRes.rows[0];
+    if (t.is_revoked) {
+      throw new BadRequestException('El token de enrolamiento ha sido revocado');
+    }
+
+    if (new Date(t.expires_at).getTime() < Date.now()) {
+      throw new BadRequestException('El token de enrolamiento ha expirado');
+    }
+
+    if (t.uses_count >= t.max_uses) {
+      throw new BadRequestException('El token de enrolamiento ha alcanzado el límite máximo de usos');
+    }
+
+    // Check if device already exists
+    const devRes = await this.databaseService.query(
+      `SELECT * FROM devices WHERE institution_id = $1 AND LOWER(mac_address) = LOWER($2);`,
+      [t.institution_id, agentData.macAddress]
+    );
+
+    let deviceId: string;
+    if (devRes.rows.length > 0) {
+      deviceId = devRes.rows[0].id;
+      await this.databaseService.query(
+        `UPDATE devices SET
+          hostname = $1, local_ip = $2, os_type = $3, os_version = $4, architecture = $5,
+          current_classroom_id = COALESCE($6, current_classroom_id),
+          processor = COALESCE($7, processor),
+          ram_mb = COALESCE($8, ram_mb),
+          storage_gb = COALESCE($9, storage_gb),
+          is_revoked = false, revocation_reason = null, is_pending_approval = false,
+          updated_at = NOW()
+         WHERE id = $10;`,
+        [
+          agentData.hostname,
+          agentData.localIp,
+          agentData.osType,
+          agentData.osVersion,
+          agentData.architecture,
+          t.classroom_id,
+          agentData.processor || null,
+          agentData.ramMb || null,
+          agentData.storageGb || null,
+          deviceId,
+        ]
+      );
+    } else {
+      deviceId = randomUUID();
+      await this.databaseService.query(
+        `INSERT INTO devices (
+          id, institution_id, hostname, mac_address, local_ip, os_type, os_version,
+          architecture, current_classroom_id, processor, ram_mb, storage_gb,
+          status, enrolled_at, is_revoked, is_pending_approval, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'online', NOW(), false, false, NOW(), NOW());`,
+        [
+          deviceId,
+          t.institution_id,
+          agentData.hostname,
+          agentData.macAddress,
+          agentData.localIp,
+          agentData.osType,
+          agentData.osVersion,
+          agentData.architecture,
+          t.classroom_id,
+          agentData.processor || null,
+          agentData.ramMb || null,
+          agentData.storageGb || null,
+        ]
+      );
+    }
+
+    // Increment token uses count
+    await this.databaseService.query(
+      `UPDATE enrollment_tokens SET uses_count = uses_count + 1 WHERE id = $1;`,
+      [t.id]
+    );
+
+    return {
+      success: true,
+      deviceId,
+      institutionId: t.institution_id,
+      classroomId: t.classroom_id,
+      message: 'Dispositivo enrolado exitosamente mediante token institucional',
+    };
+  }
 }

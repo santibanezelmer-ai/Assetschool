@@ -14,3 +14,4 @@ infrastructure/postgres/data/
 backups/
 config/
 *.backup.json
+*.tsbuildinfo

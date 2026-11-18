@@ -11,6 +11,11 @@ import { DiscoveryModule } from './discovery/discovery.module';
 import { SfuModule } from './sfu/sfu.module';
 import { ServerIdentityModule } from './identity/server-identity.module';
 import { AdminModule } from './admin/admin.module';
+import { InstitutionsModule } from './institutions/institutions.module';
+import { UsersModule } from './users/users.module';
+import { CoursesModule } from './courses/courses.module';
+import { StudentsModule } from './students/students.module';
+import { ReportsModule } from './reports/reports.module';
 
 @Module({
   imports: [
@@ -18,10 +23,15 @@ import { AdminModule } from './admin/admin.module';
     ServerIdentityModule,
     AuthModule,
     DashboardModule,
-    DevicesModule,
+    InstitutionsModule,
+    UsersModule,
+    CoursesModule,
+    StudentsModule,
     ClassroomsModule,
+    DevicesModule,
     CommandsModule,
     AuditModule,
+    ReportsModule,
     GatewayModule,
     DiscoveryModule,
     SfuModule,

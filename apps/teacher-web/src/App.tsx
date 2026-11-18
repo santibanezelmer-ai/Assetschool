@@ -10,6 +10,9 @@ import { StudentsPage } from './pages/StudentsPage';
 import { CoursesPage } from './pages/CoursesPage';
 import { ClassroomsPage } from './pages/ClassroomsPage';
 import { DevicesPage } from './pages/DevicesPage';
+import { InstitutionsPage } from './pages/InstitutionsPage';
+import { UsersPage } from './pages/UsersPage';
+import { EnrollmentPage } from './pages/EnrollmentPage';
 import { AssessmentsPage } from './pages/AssessmentsPage';
 import { ApplicationsPage } from './pages/ApplicationsPage';
 import { InternetPage } from './pages/InternetPage';
@@ -34,6 +37,9 @@ export const App: React.FC = () => {
               <Route path="courses" element={<CoursesPage />} />
               <Route path="classrooms" element={<ClassroomsPage />} />
               <Route path="devices" element={<DevicesPage />} />
+              <Route path="institutions" element={<InstitutionsPage />} />
+              <Route path="users" element={<UsersPage />} />
+              <Route path="enrollment" element={<EnrollmentPage />} />
               <Route path="assessments" element={<AssessmentsPage />} />
               <Route path="applications" element={<ApplicationsPage />} />
               <Route path="internet" element={<InternetPage />} />
