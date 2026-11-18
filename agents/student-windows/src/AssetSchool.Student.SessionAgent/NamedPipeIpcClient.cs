@@ -9,6 +9,7 @@ using System.Windows.Forms;
 using AssetSchool.Student.SessionAgent.Capture;
 using AssetSchool.Student.SessionAgent.FileTransfer;
 using AssetSchool.Student.SessionAgent.RemoteInput;
+using AssetSchool.Student.SessionAgent.Services;
 using AssetSchool.Student.SessionAgent.UI;
 
 namespace AssetSchool.Student.SessionAgent;
@@ -22,6 +23,7 @@ public class NamedPipeIpcClient
     private CancellationTokenSource? _cts;
     private readonly WindowsGraphicsCaptureService _captureService = new();
     private long _lastThumbnailSent = 0;
+    private TeacherBroadcastReceiver? _broadcastReceiver;
 
     public NamedPipeIpcClient(uint sessionId, SynchronizationContext? uiContext = null)
     {
@@ -61,6 +63,8 @@ public class NamedPipeIpcClient
     public void Stop()
     {
         _captureService.StopCapture();
+        _broadcastReceiver?.Stop();
+        _broadcastReceiver = null;
         _cts?.Cancel();
         _pipeWriter?.Dispose();
         _pipeClient?.Dispose();
@@ -199,10 +203,55 @@ public class NamedPipeIpcClient
                     case "TEACHER_BROADCAST_START":
                         string teacher = payload.TryGetProperty("teacherName", out var tn) ? tn.GetString() ?? "Profesor" : "Profesor";
                         string mode = payload.TryGetProperty("mode", out var md) ? md.GetString() ?? "fullscreen" : "fullscreen";
+                        string classroomId = payload.TryGetProperty("classroomId", out var crId) ? crId.GetString() ?? "default" : "default";
+
                         RunOnUIThread(() => TeacherBroadcastForm.Instance.StartBroadcast(teacher, mode));
+
+                        // Iniciar suscripción WebRTC real hacia Mediasoup SFU
+                        _ = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                _broadcastReceiver?.Stop();
+                                _broadcastReceiver = new TeacherBroadcastReceiver();
+                                _broadcastReceiver.OnFrameDecoded += (frame) =>
+                                {
+                                    RunOnUIThread(() => TeacherBroadcastForm.Instance.UpdateFrame(frame));
+                                };
+
+                                string sdpOffer = await _broadcastReceiver.CreateSubscriptionOfferAsync();
+                                var subPacket = new object[]
+                                {
+                                    "STUDENT_BROADCAST_SUBSCRIBE",
+                                    new
+                                    {
+                                        classroomId = classroomId,
+                                        sdpOffer = sdpOffer
+                                    }
+                                };
+                                await SendMessageAsync(JsonSerializer.Serialize(subPacket));
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine($"[WebRTC Student Error]: Fallo al crear oferta de suscripción: {ex.Message}");
+                            }
+                        });
+                        break;
+
+                    case "STUDENT_BROADCAST_SUBSCRIBED":
+                        if (payload.TryGetProperty("sdpAnswer", out var ansProp))
+                        {
+                            string? sdpAnswer = ansProp.GetString();
+                            if (!string.IsNullOrEmpty(sdpAnswer) && _broadcastReceiver != null)
+                            {
+                                _ = _broadcastReceiver.SetAnswerAsync(sdpAnswer);
+                            }
+                        }
                         break;
 
                     case "TEACHER_BROADCAST_STOP":
+                        _broadcastReceiver?.Stop();
+                        _broadcastReceiver = null;
                         RunOnUIThread(() => TeacherBroadcastForm.Instance.StopBroadcast());
                         break;
 

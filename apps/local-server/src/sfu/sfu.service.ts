@@ -15,6 +15,13 @@ export interface ActiveBroadcastSession {
   startedAt: number;
 }
 
+export interface SfuTransportConfig {
+  enableUdp: boolean;
+  enableTcp: boolean;
+  preferUdp: boolean;
+  preferTcp: boolean;
+}
+
 @Injectable()
 export class SfuService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(SfuService.name);
@@ -26,9 +33,18 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
   private readonly rtcMinPort = 40000;
   private readonly rtcMaxPort = 40999;
 
+  private transportConfig: SfuTransportConfig = {
+    enableUdp: process.env.SFU_ENABLE_UDP !== 'false',
+    enableTcp: process.env.SFU_ENABLE_TCP !== 'false', // Default true: TCP fallback activo
+    preferUdp: process.env.SFU_PREFER_UDP !== 'false',
+    preferTcp: process.env.SFU_PREFER_TCP === 'true',
+  };
+
   async onModuleInit() {
     this.lanIp = this.detectLanIp();
-    this.logger.log(`Inicializando Mediasoup SFU v3 en LAN IP: ${this.lanIp} (Rango UDP: ${this.rtcMinPort}-${this.rtcMaxPort})...`);
+    this.logger.log(
+      `Inicializando Mediasoup SFU v3 en LAN IP: ${this.lanIp} (Rango UDP/TCP: ${this.rtcMinPort}-${this.rtcMaxPort}, UDP: ${this.transportConfig.enableUdp}, TCP: ${this.transportConfig.enableTcp})...`,
+    );
 
     try {
       this.worker = await mediasoup.createWorker({
@@ -152,11 +168,16 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
     }
 
     // 1. Create WebRtcTransport for sending video from teacher
+    if (!this.transportConfig.enableUdp && !this.transportConfig.enableTcp) {
+      throw new Error('Configuración de transporte inválida: al menos uno de UDP o TCP debe estar habilitado.');
+    }
+
     const transport = await router.createWebRtcTransport({
       listenIps: [{ ip: '0.0.0.0', announcedIp: this.lanIp }],
-      enableUdp: true,
-      enableTcp: false,
-      preferUdp: true,
+      enableUdp: this.transportConfig.enableUdp,
+      enableTcp: this.transportConfig.enableTcp,
+      preferUdp: this.transportConfig.preferUdp,
+      preferTcp: this.transportConfig.preferTcp,
     });
 
     // 2. Parse client SDP Offer
@@ -243,11 +264,16 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
     const router = await this.getOrCreateRouter(institutionId, classroomId);
 
     // 1. Create Recv WebRtcTransport for student
+    if (!this.transportConfig.enableUdp && !this.transportConfig.enableTcp) {
+      throw new Error('Configuración de transporte inválida: al menos uno de UDP o TCP debe estar habilitado.');
+    }
+
     const transport = await router.createWebRtcTransport({
       listenIps: [{ ip: '0.0.0.0', announcedIp: this.lanIp }],
-      enableUdp: true,
-      enableTcp: false,
-      preferUdp: true,
+      enableUdp: this.transportConfig.enableUdp,
+      enableTcp: this.transportConfig.enableTcp,
+      preferUdp: this.transportConfig.preferUdp,
+      preferTcp: this.transportConfig.preferTcp,
     });
 
     // 2. Parse client SDP Offer
@@ -399,6 +425,58 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  public getTransportConfig(): SfuTransportConfig {
+    return { ...this.transportConfig };
+  }
+
+  public setTransportConfig(config: Partial<SfuTransportConfig>): SfuTransportConfig {
+    this.transportConfig = {
+      ...this.transportConfig,
+      ...config,
+    };
+    this.logger.log(
+      `[SFU CONFIG] Configuración de transporte actualizada: UDP=${this.transportConfig.enableUdp}, TCP=${this.transportConfig.enableTcp}, PreferUDP=${this.transportConfig.preferUdp}, PreferTCP=${this.transportConfig.preferTcp}`,
+    );
+    return this.getTransportConfig();
+  }
+
+  public getTransportDiagnostics() {
+    return {
+      lanIp: this.lanIp,
+      rtcMinPort: this.rtcMinPort,
+      rtcMaxPort: this.rtcMaxPort,
+      transportConfig: { ...this.transportConfig },
+      activeRoutersCount: this.classroomRouters.size,
+      activeBroadcastsCount: this.activeBroadcasts.size,
+      isHealthy:
+        (this.transportConfig.enableUdp || this.transportConfig.enableTcp) &&
+        !!this.worker &&
+        !this.worker.closed,
+      recommendedFirewallRules: [
+        {
+          protocol: 'UDP',
+          portRange: `${this.rtcMinPort}-${this.rtcMaxPort}`,
+          description: 'WebRTC RTP/RTCP/DTLS streaming multimedia docente (Transporte principal de baja latencia)',
+        },
+        {
+          protocol: 'TCP',
+          portRange: `${this.rtcMinPort}-${this.rtcMaxPort}`,
+          description: 'WebRTC TCP Fallback cuando UDP está bloqueado por firewall/switch educativo',
+        },
+        {
+          protocol: 'TCP',
+          portRange: '3000',
+          description: 'API REST HTTP y señalización WebSocket Socket.IO',
+        },
+        {
+          protocol: 'UDP',
+          portRange: '48500',
+          description: 'Descubrimiento LAN por balizas UDP broadcast',
+        },
+      ],
+    };
+  }
+
   public async getWorkerResourceUsage(): Promise<mediasoup.types.WorkerResourceUsage | null> {
     if (!this.worker || this.worker.closed) return null;
     return this.worker.getResourceUsage();
@@ -414,6 +492,7 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
     const videoMedia = parsedOffer.media.find((m: any) => m.type === 'video') || parsedOffer.media[0] || {};
     const mid = videoMedia.mid || '0';
     const candidate = transport.iceCandidates[0] || { ip: this.lanIp, port: 40000, protocol: 'udp', foundation: '1', priority: 1, type: 'host' };
+    const defaultProtocol = this.transportConfig.enableUdp ? 'UDP/TLS/RTP/SAVPF' : 'TCP/TLS/RTP/SAVPF';
 
     const answerObj: any = {
       version: 0,
@@ -438,7 +517,7 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
         {
           type: 'video',
           port: candidate.port || 40000,
-          protocol: 'UDP/TLS/RTP/SAVPF',
+          protocol: defaultProtocol,
           payloads: '96',
           connection: {
             version: 4,
@@ -479,6 +558,7 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
             ip: c.ip,
             port: c.port,
             type: c.type,
+            ...(c.protocol === 'tcp' ? { tcptype: c.tcpType || c.tcptype || 'passive' } : {}),
           })),
           endOfCandidates: 'end-of-candidates',
         },

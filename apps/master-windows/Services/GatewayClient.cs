@@ -34,8 +34,8 @@ public class GatewayClient : IDisposable
     private string _currentClassroomId = "lab-informatica-01";
 
     // WebRTC SFU Broadcast
-    private RTCPeerConnection? _peerConnection;
-    private CancellationTokenSource? _broadcastCts;
+    private TeacherScreenBroadcastPipeline? _broadcastPipeline;
+    private TaskCompletionSource<string>? _sdpAnswerTcs;
 
     public ObservableCollection<StudentDeviceViewModel> Devices { get; } = new();
     public bool IsConnected => _isConnected;
@@ -230,6 +230,14 @@ public class GatewayClient : IDisposable
 
                         case "FILE_LIST_DIR_RESULT":
                             HandleDirListResult(payload);
+                            break;
+
+                        case "TEACHER_BROADCAST_STARTED":
+                            HandleTeacherBroadcastStarted(payload);
+                            break;
+
+                        case "TEACHER_BROADCAST_STOPPED":
+                            HandleTeacherBroadcastStopped();
                             break;
                     }
                 });
@@ -511,74 +519,89 @@ public class GatewayClient : IDisposable
     public async Task StartBroadcastAsync(string mode = "fullscreen")
     {
         if (IsBroadcasting) return;
-        IsBroadcasting = true;
 
-        OnLog?.Invoke($"[WebRTC SFU] Iniciando transmisión docente en modo {mode}...");
-        await SendEventAsync("TEACHER_BROADCAST_START", new
-        {
-            classroomId = _currentClassroomId,
-            mode,
-            fps = 30,
-            bitrateKbps = 2500,
-            teacherName = "Profesor"
-        });
-
-        // Initialize SIPSorcery PeerConnection for WebRTC media pipeline
         try
         {
-            _broadcastCts = new CancellationTokenSource();
-            _peerConnection = new RTCPeerConnection(new RTCConfiguration
+            OnLog?.Invoke($"[WebRTC SFU] Creando pipeline de emisión docente en modo {mode}...");
+            _broadcastPipeline?.StopBroadcast();
+            _broadcastPipeline = new TeacherScreenBroadcastPipeline();
+            _broadcastPipeline.OnLog += (msg) => OnLog?.Invoke(msg);
+            _broadcastPipeline.OnConnectionStateChanged += (state) =>
             {
-                iceServers = new System.Collections.Generic.List<RTCIceServer>() // Direct LAN, no public STUN
+                OnLog?.Invoke($"[WebRTC SFU] Estado de canalización de video: {state}");
+            };
+
+            // 1. Generar SDP Offer real con SIPSorcery
+            string sdpOffer = await _broadcastPipeline.CreateBroadcastOfferAsync();
+            _sdpAnswerTcs = new TaskCompletionSource<string>();
+
+            // 2. Enviar oferta al servidor local para que Mediasoup cree el WebRtcTransport y Producer
+            await SendEventAsync("TEACHER_BROADCAST_START", new
+            {
+                classroomId = _currentClassroomId,
+                mode,
+                fps = 30,
+                bitrateKbps = 2500,
+                teacherName = "Profesor",
+                sdpOffer
             });
 
-            _ = Task.Run(() => ScreenCaptureBroadcastLoop(_broadcastCts.Token), _broadcastCts.Token);
-            OnLog?.Invoke("[WebRTC SFU] Pipeline de captura y codificación en vivo activo.");
+            // 3. Esperar SDP Answer de Mediasoup con timeout de 5 segundos
+            var completedTask = await Task.WhenAny(_sdpAnswerTcs.Task, Task.Delay(5000));
+            if (completedTask == _sdpAnswerTcs.Task)
+            {
+                string sdpAnswer = await _sdpAnswerTcs.Task;
+                await _broadcastPipeline.StartStreamingAsync(sdpAnswer, targetFps: 30);
+                IsBroadcasting = true;
+                OnLog?.Invoke("[WebRTC SFU] Transmisión de pantalla docente activa hacia Mediasoup.");
+            }
+            else
+            {
+                OnLog?.Invoke("[WebRTC SFU Advertencia]: Timeout esperando SDP Answer del SFU.");
+                _broadcastPipeline.StopBroadcast();
+            }
         }
         catch (Exception ex)
         {
-            OnLog?.Invoke($"Advertencia al inicializar WebRTC nativo: {ex.Message}");
+            OnLog?.Invoke($"[WebRTC SFU Error]: Fallo al iniciar transmisión: {ex.Message}");
+            _broadcastPipeline?.StopBroadcast();
+            IsBroadcasting = false;
         }
     }
 
     public async Task StopBroadcastAsync()
     {
-        if (!IsBroadcasting) return;
+        if (!IsBroadcasting && _broadcastPipeline == null) return;
         IsBroadcasting = false;
 
-        _broadcastCts?.Cancel();
-        _broadcastCts?.Dispose();
-        _broadcastCts = null;
-
-        _peerConnection?.Close("Docente detuvo la transmisión");
-        _peerConnection?.Dispose();
-        _peerConnection = null;
+        _broadcastPipeline?.StopBroadcast();
+        _broadcastPipeline = null;
+        _sdpAnswerTcs = null;
 
         await SendEventAsync("TEACHER_BROADCAST_STOP", new { classroomId = _currentClassroomId });
         OnLog?.Invoke("[WebRTC SFU] Transmisión docente detenida.");
     }
 
-    private async Task ScreenCaptureBroadcastLoop(CancellationToken token)
+    private void HandleTeacherBroadcastStarted(JsonElement payload)
     {
-        var bounds = Screen.PrimaryScreen?.Bounds ?? new Rectangle(0, 0, 1920, 1080);
-        while (!token.IsCancellationRequested && IsBroadcasting)
+        if (payload.TryGetProperty("sdpAnswer", out var ansProp))
         {
-            try
+            string? sdpAnswer = ansProp.GetString();
+            if (!string.IsNullOrEmpty(sdpAnswer) && _sdpAnswerTcs != null && !_sdpAnswerTcs.Task.IsCompleted)
             {
-                // Capture primary screen
-                using var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
-                }
+                _sdpAnswerTcs.TrySetResult(sdpAnswer);
+            }
+        }
+    }
 
-                // In SIPSorcery, video frames are fed into the video track source
-                await Task.Delay(33, token); // ~30 FPS
-            }
-            catch (Exception)
-            {
-                break;
-            }
+    private void HandleTeacherBroadcastStopped()
+    {
+        if (IsBroadcasting)
+        {
+            _broadcastPipeline?.StopBroadcast();
+            _broadcastPipeline = null;
+            IsBroadcasting = false;
+            OnLog?.Invoke("[WebRTC SFU] Servidor confirmó detención de transmisión.");
         }
     }
 

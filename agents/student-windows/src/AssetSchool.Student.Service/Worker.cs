@@ -17,7 +17,7 @@ namespace AssetSchool.Student.Service;
 public class Worker : BackgroundService
 {
     private readonly ILogger<Worker> _logger;
-    private NamedPipeIpcServer? _ipcServer;
+    private MultiSessionIpcManager? _sessionIpcManager;
     private ClientWebSocket? _webSocket;
     private string _serverHost = "127.0.0.1";
     private int _serverPort = 3000;
@@ -37,9 +37,12 @@ public class Worker : BackgroundService
         _logger.LogInformation($"  MAC: {GetActiveMacAddress()} | IP: {GetLocalIpAddress()}");
         _logger.LogInformation("=========================================================");
 
-        // Start Named Pipe IPC Server for active console session (Session 1)
-        _ipcServer = new NamedPipeIpcServer(1);
-        _ipcServer.OnMessageReceived += async (msg) =>
+        // Multi-Session IPC Manager: handles dynamic sessions, fast user switching, and Session 0 isolation
+        string currentDir = AppDomain.CurrentDomain.BaseDirectory;
+        string agentPath = Path.Combine(currentDir, "AssetSchool.Student.SessionAgent.exe");
+
+        _sessionIpcManager = new MultiSessionIpcManager(_logger, agentPath);
+        _sessionIpcManager.OnMessageReceived += async (sessionId, msg) =>
         {
             // Forward messages from SessionAgent up to central local-server
             try
@@ -51,18 +54,10 @@ public class Worker : BackgroundService
             }
             catch (Exception ex)
             {
-                _logger.LogWarning($"Error enviando mensaje de SessionAgent al servidor: {ex.Message}");
+                _logger.LogWarning($"Error enviando mensaje de SessionAgent #{sessionId} al servidor: {ex.Message}");
             }
         };
-        _ipcServer.Start();
-
-        // Spawn SessionAgent in Session 1 if interactive session is available
-        string currentDir = AppDomain.CurrentDomain.BaseDirectory;
-        string agentPath = Path.Combine(currentDir, "AssetSchool.Student.SessionAgent.exe");
-        if (File.Exists(agentPath))
-        {
-            SessionManager.LaunchSessionAgent(agentPath);
-        }
+        _sessionIpcManager.Start(stoppingToken);
 
         // Start UDP Discovery Listener in background
         _ = Task.Run(() => ListenUdpDiscovery(stoppingToken), stoppingToken);
@@ -239,10 +234,10 @@ public class Worker : BackgroundService
                 }
                 else
                 {
-                    // Forward UI / interactive commands to SessionAgent via Named Pipe
-                    if (_ipcServer != null)
+                    // Forward UI / interactive commands to all active SessionAgents via MultiSession IPC
+                    if (_sessionIpcManager != null)
                     {
-                        await _ipcServer.SendMessageAsync(json);
+                        await _sessionIpcManager.BroadcastAsync(json);
                     }
                 }
             }

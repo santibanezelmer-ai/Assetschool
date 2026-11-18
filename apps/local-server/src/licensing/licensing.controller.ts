@@ -9,9 +9,18 @@ import { SystemRole } from '@assetschool/shared-types';
 export class LicensingController {
   constructor(private readonly licensingService: LicensingService) {}
 
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(
+    SystemRole.SUPERADMIN,
+    SystemRole.INSTITUTION_ADMIN,
+    SystemRole.DIRECTOR,
+    SystemRole.TEACHER,
+    SystemRole.TECH_SUPPORT,
+  )
   @Get('status')
   async getStatus(@Request() req: any) {
-    const institutionId = req.user?.institutionId;
+    const isSuperAdmin = req.user?.role === SystemRole.SUPERADMIN;
+    const institutionId = isSuperAdmin ? undefined : req.user?.institutionId;
     return this.licensingService.getLicenseStatus(institutionId);
   }
 
