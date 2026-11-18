@@ -185,6 +185,15 @@ public class MasterGatewayClient: ObservableObject {
                         dev.thumbnail = image
                     }
                 }
+            } else if eventName == "TEACHER_BROADCAST_STARTED" {
+                if array.count > 1, let payload = array[1] as? [String: Any] {
+                    let targetCount = payload["targetCount"] as? Int ?? 0
+                    let producerId = payload["producerId"] as? String ?? ""
+                    self.log("[SFU BROADCAST] ✅ Transmisión docente iniciada hacia \(targetCount) estudiantes (Producer ID: \(producerId))")
+                }
+            } else if eventName == "TEACHER_BROADCAST_STOPPED" {
+                self.isBroadcastingScreen = false
+                self.log("[SFU BROADCAST] 🛑 Transmisión docente finalizada.")
             }
         }
     }
@@ -299,10 +308,32 @@ public class MasterGatewayClient: ObservableObject {
         emitEvent(["TEACHER_POWER_ACTION", payload])
     }
 
-    public func startTeacherBroadcast(mode: String = "fullscreen") {
-        log("[BROADCAST] Iniciando transmisión docente (\(mode))")
+    public func startTeacherBroadcast(mode: String = "fullscreen", sdpOffer: String? = nil) {
+        log("[BROADCAST] Iniciando transmisión docente (\(mode)) con SFU Mediasoup...")
         isBroadcastingScreen = true
-        emitEvent(["TEACHER_BROADCAST_START", ["mode": mode, "fps": 30, "bitrateKbps": 2500]])
+        var payload: [String: Any] = ["mode": mode, "fps": 30, "bitrateKbps": 2500]
+        if let sdp = sdpOffer {
+            payload["sdpOffer"] = sdp
+        } else {
+            payload["sdpOffer"] = """
+            v=0\r
+            o=- \(Int(Date().timeIntervalSince1970)) 2 IN IP4 127.0.0.1\r
+            s=AssetSchool-Teacher-Broadcast\r
+            t=0 0\r
+            m=video 9 UDP/TLS/RTP/SAVPF 96\r
+            c=IN IP4 127.0.0.1\r
+            a=rtcp:9 IN IP4 127.0.0.1\r
+            a=sendonly\r
+            a=rtpmap:96 H264/90000\r
+            a=fmtp:96 packetization-mode=1;profile-level-id=42e01f;level-asymmetry-allowed=1\r
+            a=rtcp-fb:96 nack\r
+            a=rtcp-fb:96 nack pli\r
+            a=rtcp-fb:96 ccm fir\r
+            a=ssrc:11223344 cname:assetschool-teacher-screen\r
+            a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r
+            """
+        }
+        emitEvent(["TEACHER_BROADCAST_START", payload])
     }
 
     public func stopTeacherBroadcast() {

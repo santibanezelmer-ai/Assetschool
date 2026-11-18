@@ -73,28 +73,28 @@ public final class RemoteInputService {
         let targetY = CGFloat(normY) * screenHeight
         let targetPoint = CGPoint(x: targetX, y: targetY)
         
-        switch type {
-        case "mouseMove":
+        switch type.lowercased() {
+        case "mousemove":
             if let event = CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: targetPoint, mouseButton: .left) {
                 event.post(tap: .cghidEventTap)
             }
             
-        case "mouseDown":
-            let mouseType: CGEventType = (button == "right") ? .rightMouseDown : .leftMouseDown
-            let mouseButton: CGMouseButton = (button == "right") ? .right : .left
+        case "mousedown":
+            let mouseType: CGEventType = (button?.lowercased() == "right") ? .rightMouseDown : .leftMouseDown
+            let mouseButton: CGMouseButton = (button?.lowercased() == "right") ? .right : .left
             if let event = CGEvent(mouseEventSource: nil, mouseType: mouseType, mouseCursorPosition: targetPoint, mouseButton: mouseButton) {
                 event.post(tap: .cghidEventTap)
             }
             
-        case "mouseUp":
-            let mouseType: CGEventType = (button == "right") ? .rightMouseUp : .leftMouseUp
-            let mouseButton: CGMouseButton = (button == "right") ? .right : .left
+        case "mouseup":
+            let mouseType: CGEventType = (button?.lowercased() == "right") ? .rightMouseUp : .leftMouseUp
+            let mouseButton: CGMouseButton = (button?.lowercased() == "right") ? .right : .left
             if let event = CGEvent(mouseEventSource: nil, mouseType: mouseType, mouseCursorPosition: targetPoint, mouseButton: mouseButton) {
                 event.post(tap: .cghidEventTap)
             }
             
         case "click":
-            let isRight = (button == "right")
+            let isRight = (button?.lowercased() == "right")
             let downType: CGEventType = isRight ? .rightMouseDown : .leftMouseDown
             let upType: CGEventType = isRight ? .rightMouseUp : .leftMouseUp
             let btn: CGMouseButton = isRight ? .right : .left
@@ -106,7 +106,7 @@ public final class RemoteInputService {
                 up.post(tap: .cghidEventTap)
             }
             
-        case "doubleClick":
+        case "doubleclick":
             if let down = CGEvent(mouseEventSource: nil, mouseType: .leftMouseDown, mouseCursorPosition: targetPoint, mouseButton: .left),
                let up = CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: targetPoint, mouseButton: .left) {
                 down.setIntegerValueField(.mouseEventClickState, value: 1)
@@ -118,14 +118,14 @@ public final class RemoteInputService {
                 up.post(tap: .cghidEventTap)
             }
             
-        case "keyDown":
+        case "keydown":
             if let code = keyCode {
                 if let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: true) {
                     event.post(tap: .cghidEventTap)
                 }
             }
             
-        case "keyUp":
+        case "keyup":
             if let code = keyCode {
                 if let event = CGEvent(keyboardEventSource: nil, virtualKey: CGKeyCode(code), keyDown: false) {
                     event.post(tap: .cghidEventTap)

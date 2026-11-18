@@ -8,6 +8,7 @@ import { CommandsModule } from './commands/commands.module';
 import { AuditModule } from './audit/audit.module';
 import { GatewayModule } from './gateway/gateway.module';
 import { DiscoveryModule } from './discovery/discovery.module';
+import { SfuModule } from './sfu/sfu.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { DiscoveryModule } from './discovery/discovery.module';
     AuditModule,
     GatewayModule,
     DiscoveryModule,
+    SfuModule,
   ],
 })
 export class AppModule {}

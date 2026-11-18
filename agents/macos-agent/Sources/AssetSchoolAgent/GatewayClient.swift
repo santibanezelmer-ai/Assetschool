@@ -163,7 +163,7 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         }
         
         let envelope = array.count > 1 ? array[1] as? [String: Any] : nil
-        let payload = envelope?["payload"] as? [String: Any]
+        let payload = (envelope?["payload"] as? [String: Any]) ?? envelope
         
         switch eventName {
         case "SERVER_HELLO_ACK", "server:hello_ack":
@@ -265,9 +265,18 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         case "TEACHER_BROADCAST_START":
             let teacher = payload?["teacherName"] as? String ?? "el Profesor"
             let mode = payload?["mode"] as? String ?? "fullscreen"
-            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente iniciada por \(teacher) (Modo: \(mode))")
+            let classroomId = payload?["classroomId"] as? String ?? "default"
+            let sfuProducerId = payload?["sfuProducerId"] as? String
+            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente iniciada por \(teacher) (Modo: \(mode), SFU Producer: \(sfuProducerId ?? "N/A"))")
             TeacherBroadcastManager.shared.startBroadcast(teacherName: teacher, mode: mode)
             CaptureIndicatorWindow.shared.showSupervision(teacherName: teacher)
+            if sfuProducerId != nil {
+                self.subscribeToSfuBroadcast(classroomId: classroomId)
+            }
+
+        case "STUDENT_BROADCAST_SUBSCRIBED":
+            let consumerId = payload?["consumerId"] as? String ?? ""
+            print("[GATEWAY CLIENT SFU] ✅ Suscripción SFU confirmada por el servidor (Consumer ID: \(consumerId)).")
 
         case "TEACHER_BROADCAST_STOP":
             print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente finalizada.")
@@ -279,6 +288,31 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         }
     }
     
+    private func subscribeToSfuBroadcast(classroomId: String) {
+        print("[GATEWAY CLIENT SFU] 📡 Enviando oferta de suscripción WebRTC para pantalla docente en aula \(classroomId)...")
+        let sdpOffer = """
+        v=0\r
+        o=- \(Int(Date().timeIntervalSince1970)) 2 IN IP4 127.0.0.1\r
+        s=AssetSchool-Student-Recv\r
+        t=0 0\r
+        m=video 9 UDP/TLS/RTP/SAVPF 96\r
+        c=IN IP4 127.0.0.1\r
+        a=rtcp:9 IN IP4 127.0.0.1\r
+        a=recvonly\r
+        a=rtpmap:96 H264/90000\r
+        a=fmtp:96 packetization-mode=1;profile-level-id=42e01f\r
+        a=rtcp-fb:96 nack\r
+        a=rtcp-fb:96 nack pli\r
+        a=rtcp-fb:96 ccm fir\r
+        a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r
+        """
+
+        sendEvent(name: "STUDENT_BROADCAST_SUBSCRIBE", payload: [
+            "classroomId": classroomId,
+            "sdpOffer": sdpOffer
+        ])
+    }
+
     private func handleStartCapture(envelope: [String: Any]?, payload: [String: Any]?) {
         guard let payload = payload else { return }
         let sessionId = (payload["sessionId"] as? String) ?? "stream_\(UUID().uuidString)"

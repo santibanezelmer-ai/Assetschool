@@ -31,6 +31,7 @@ import {
   CommandResultPayload,
 } from '@assetschool/protocol';
 import { DatabaseService } from '../database/database.service';
+import { SfuService } from '../sfu/sfu.service';
 import { DeviceStatus, SystemRole, CommandType, CommandStatus } from '@assetschool/shared-types';
 import { randomBytes, randomUUID } from 'crypto';
 import { hasPermission, PermissionKey } from '@assetschool/permissions';
@@ -43,6 +44,7 @@ interface AuthenticatedAgentSession {
   hostname: string;
   deviceId?: string;
   institutionId?: string;
+  classroomId?: string;
   macAddress: string;
   sessionToken: string;
   authenticatedAt: number;
@@ -160,6 +162,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   constructor(
     private readonly databaseService: DatabaseService,
     @Optional() private readonly jwtService?: JwtService,
+    @Optional() private readonly sfuService?: SfuService,
   ) {
     this.heartbeatIntervalTimer = setInterval(() => {
       this.checkStaleConnections();
@@ -232,6 +235,10 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
         }
       }
       this.connectedTeachers.delete(client.id);
+    }
+
+    if (this.sfuService) {
+      this.sfuService.handleSocketDisconnect(client.id);
     }
   }
 
@@ -1662,6 +1669,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
   async handleTeacherBroadcastStart(
     @ConnectedSocket() client: Socket,
     @MessageBody() body: {
+      classroomId?: string;
       sessionId?: string;
       mode?: 'fullscreen' | 'windowed';
       fps?: number;
@@ -1677,7 +1685,24 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
 
     const sessionId = body?.sessionId || randomUUID();
     const mode = body?.mode || 'fullscreen';
-    this.logger.log(`[BROADCAST] Docente ${teacher.email} iniciando presentación de pantalla (${mode})`);
+    const classroomId = body?.classroomId || teacher.classroomId || 'default';
+    this.logger.log(`[BROADCAST] Docente ${teacher.email} iniciando presentación de pantalla (${mode}) en aula ${classroomId}`);
+
+    let sfuResult: { producerId: string; sdpAnswer: string } | null = null;
+    if (body?.sdpOffer && this.sfuService) {
+      try {
+        sfuResult = await this.sfuService.handleTeacherBroadcastStart(
+          teacher.institutionId,
+          classroomId,
+          client.id,
+          body.sdpOffer,
+        );
+      } catch (err: any) {
+        this.logger.error(`Error al iniciar SFU Producer para docente: ${err.message}`);
+        client.emit('TEACHER_ERROR', { code: 'SFU_ERROR', message: `Fallo al iniciar SFU: ${err.message}` });
+        return;
+      }
+    }
 
     let targetCount = 0;
     for (const [socketId, agent] of this.connectedAgents.entries()) {
@@ -1686,10 +1711,11 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
           sessionId,
           teacherId: teacher.userId,
           teacherName: teacher.email,
+          classroomId,
           mode,
           fps: body?.fps || 30,
           bitrateKbps: body?.bitrateKbps || 2500,
-          sdpOffer: body?.sdpOffer,
+          sfuProducerId: sfuResult?.producerId,
         });
         if (this.emitToSocket(socketId, PacketType.TEACHER_BROADCAST_START, envelope)) {
           targetCount++;
@@ -1705,27 +1731,82 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       entityType: 'CLASSROOM',
       entityId: teacher.institutionId,
       ipAddress: client.handshake.address,
-      details: { sessionId, mode, targetCount },
+      details: { sessionId, classroomId, mode, targetCount, sfuProducerId: sfuResult?.producerId },
     });
 
-    client.emit('TEACHER_BROADCAST_STARTED', { sessionId, targetCount });
+    client.emit('TEACHER_BROADCAST_STARTED', {
+      sessionId,
+      targetCount,
+      producerId: sfuResult?.producerId,
+      sdpAnswer: sfuResult?.sdpAnswer,
+    });
+  }
+
+  @SubscribeMessage('STUDENT_BROADCAST_SUBSCRIBE')
+  async handleStudentBroadcastSubscribe(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      classroomId?: string;
+      sdpOffer: string;
+    },
+  ) {
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent || agent.quarantined || !agent.institutionId || !agent.deviceId) {
+      client.emit('AGENT_ERROR', { code: 'UNAUTHORIZED', message: 'Agente no autenticado o en cuarentena' });
+      return;
+    }
+
+    if (!this.sfuService) {
+      client.emit('AGENT_ERROR', { code: 'SFU_UNAVAILABLE', message: 'Servicio SFU no disponible en el servidor' });
+      return;
+    }
+
+    if (!body?.sdpOffer) {
+      client.emit('AGENT_ERROR', { code: 'BAD_REQUEST', message: 'Se requiere sdpOffer para la suscripción SFU' });
+      return;
+    }
+
+    const classroomId = body?.classroomId || agent.classroomId || 'default';
+    try {
+      const { consumerId, sdpAnswer } = await this.sfuService.handleStudentBroadcastSubscribe(
+        agent.institutionId,
+        classroomId,
+        client.id,
+        agent.deviceId,
+        body.sdpOffer,
+      );
+
+      client.emit('STUDENT_BROADCAST_SUBSCRIBED', {
+        consumerId,
+        sdpAnswer,
+      });
+    } catch (err: any) {
+      this.logger.error(`Error al suscribir estudiante ${agent.deviceId} a SFU: ${err.message}`);
+      client.emit('AGENT_ERROR', { code: 'SFU_SUBSCRIBE_FAILED', message: err.message });
+    }
   }
 
   @SubscribeMessage('TEACHER_BROADCAST_STOP')
   async handleTeacherBroadcastStop(
     @ConnectedSocket() client: Socket,
-    @MessageBody() body: { sessionId?: string },
+    @MessageBody() body: { classroomId?: string; sessionId?: string },
   ) {
     const teacher = this.connectedTeachers.get(client.id);
     if (!teacher) return;
 
-    this.logger.log(`[BROADCAST] Docente ${teacher.email} finalizó la presentación de pantalla`);
+    const classroomId = body?.classroomId || teacher.classroomId || 'default';
+    this.logger.log(`[BROADCAST] Docente ${teacher.email} finalizó la presentación de pantalla en aula ${classroomId}`);
+
+    if (this.sfuService) {
+      this.sfuService.handleTeacherBroadcastStop(teacher.institutionId, classroomId);
+    }
 
     for (const [socketId, agent] of this.connectedAgents.entries()) {
       if (agent.institutionId === teacher.institutionId) {
         const envelope = createEnvelope(PacketType.TEACHER_BROADCAST_STOP, 'SERVER', 'server', {
           sessionId: body?.sessionId,
           teacherId: teacher.userId,
+          classroomId,
         });
         this.emitToSocket(socketId, PacketType.TEACHER_BROADCAST_STOP, envelope);
       }
@@ -1739,7 +1820,7 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       entityType: 'CLASSROOM',
       entityId: teacher.institutionId,
       ipAddress: client.handshake.address,
-      details: { sessionId: body?.sessionId },
+      details: { sessionId: body?.sessionId, classroomId },
     });
 
     client.emit('TEACHER_BROADCAST_STOPPED', { success: true });
