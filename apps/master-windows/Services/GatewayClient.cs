@@ -253,6 +253,7 @@ public class GatewayClient : IDisposable
             var ip = item.TryGetProperty("localIp", out var ipProp) ? ipProp.GetString() ?? "127.0.0.1" : "127.0.0.1";
             var mac = item.TryGetProperty("macAddress", out var macProp) ? macProp.GetString() ?? "" : "";
             var os = item.TryGetProperty("osType", out var osProp) ? osProp.GetString() ?? "windows" : "windows";
+            var agentVer = item.TryGetProperty("agentVersion", out var avProp) ? avProp.GetString() ?? "1.0.0" : "1.0.0";
             var status = item.TryGetProperty("status", out var stProp) ? stProp.GetString() ?? "online" : "online";
             var student = item.TryGetProperty("currentStudentName", out var sProp) ? sProp.GetString() : null;
 
@@ -263,6 +264,7 @@ public class GatewayClient : IDisposable
                 LocalIp = ip,
                 MacAddress = mac,
                 OsType = os,
+                AgentVersion = agentVer,
                 Status = status,
                 IsLocked = status == "locked",
                 CurrentStudentName = student,

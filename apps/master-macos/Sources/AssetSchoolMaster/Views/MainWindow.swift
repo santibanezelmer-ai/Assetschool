@@ -13,19 +13,36 @@ public struct MasterMainWindow: View {
     @State private var showFileDialog = false
 
     @State private var viewMode: MasterViewMode = .grid
+    @State private var filterCriteria: MasterFilterCriteria = .all
     @State private var searchText: String = ""
     @State private var customIpAddress = "127.0.0.1"
 
     public init() {}
 
     public var filteredDevices: [StudentDevice] {
-        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
-            return client.devices
-        }
-        return client.devices.filter { dev in
-            dev.hostname.localizedCaseInsensitiveContains(searchText) ||
-            dev.localIp.localizedCaseInsensitiveContains(searchText) ||
-            (dev.currentStudentName?.localizedCaseInsensitiveContains(searchText) ?? false)
+        client.devices.filter { dev in
+            let matchesCriteria: Bool
+            switch filterCriteria {
+            case .all:
+                matchesCriteria = true
+            case .windows:
+                matchesCriteria = dev.osType == .windows
+            case .macos:
+                matchesCriteria = dev.osType == .macos
+            case .connected:
+                matchesCriteria = !dev.isDisconnected
+            case .disconnected:
+                matchesCriteria = dev.isDisconnected
+            }
+            guard matchesCriteria else { return false }
+
+            if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+                return true
+            }
+            return dev.hostname.localizedCaseInsensitiveContains(searchText) ||
+                   dev.localIp.localizedCaseInsensitiveContains(searchText) ||
+                   (dev.currentStudentName?.localizedCaseInsensitiveContains(searchText) ?? false) ||
+                   dev.osNameFormatted.localizedCaseInsensitiveContains(searchText)
         }
     }
 
@@ -227,6 +244,17 @@ public struct MasterMainWindow: View {
                 .cornerRadius(6)
                 .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.25), lineWidth: 1))
                 .frame(maxWidth: 320)
+
+                Divider().frame(height: 20)
+
+                // Multiplatform OS & Status Filter Picker
+                Picker("Filtro:", selection: $filterCriteria) {
+                    ForEach(MasterFilterCriteria.allCases) { crit in
+                        Label(crit.rawValue, systemImage: crit.iconName).tag(crit)
+                    }
+                }
+                .pickerStyle(MenuPickerStyle())
+                .frame(width: 140)
 
                 Divider().frame(height: 20)
 

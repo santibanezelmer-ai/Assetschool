@@ -12,12 +12,22 @@ public enum ClassroomViewMode
     DetailedTable
 }
 
+public enum ClassroomFilterCriteria
+{
+    All,
+    Windows,
+    MacOS,
+    Connected,
+    Disconnected
+}
+
 public class ClassroomViewModel : INotifyPropertyChanged
 {
     private string _currentClassroomId = "lab-informatica-01";
     private string _currentClassroomName = "Laboratorio 1 — Informática";
     private string _searchFilter = string.Empty;
     private ClassroomViewMode _viewMode = ClassroomViewMode.Grid;
+    private ClassroomFilterCriteria _selectedFilter = ClassroomFilterCriteria.All;
     private bool _isBroadcasting;
     private string _broadcastMode = "fullscreen";
     private int _broadcastingCount;
@@ -58,6 +68,12 @@ public class ClassroomViewModel : INotifyPropertyChanged
                 OnPropertyChanged(nameof(IsTableView));
             }
         }
+    }
+
+    public ClassroomFilterCriteria SelectedFilter
+    {
+        get => _selectedFilter;
+        set => SetField(ref _selectedFilter, value);
     }
 
     public bool IsGridView => _viewMode == ClassroomViewMode.Grid;

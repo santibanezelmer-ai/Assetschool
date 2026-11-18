@@ -14,6 +14,26 @@ public enum MasterViewMode: String, CaseIterable, Identifiable {
     }
 }
 
+public enum MasterFilterCriteria: String, CaseIterable, Identifiable {
+    case all = "Todos"
+    case windows = "Windows"
+    case macos = "macOS"
+    case connected = "Conectados"
+    case disconnected = "Desconectados"
+
+    public var id: String { rawValue }
+
+    public var iconName: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .windows: return "desktopcomputer"
+        case .macos: return "apple.logo"
+        case .connected: return "antenna.radiowaves.left.and.right"
+        case .disconnected: return "wifi.slash"
+        }
+    }
+}
+
 public struct ClassroomInfo: Identifiable, Hashable {
     public let id: String
     public let name: String

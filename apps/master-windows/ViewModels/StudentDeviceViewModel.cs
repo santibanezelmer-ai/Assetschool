@@ -23,6 +23,8 @@ public class StudentDeviceViewModel : INotifyPropertyChanged
     private DateTime _lastHeartbeat = DateTime.UtcNow;
     private bool _isConnectionStale;
     private bool _isDisconnected;
+    private string _agentVersion = "1.0.0";
+    private bool _isBroadcasting;
 
     public string Id
     {
@@ -39,7 +41,44 @@ public class StudentDeviceViewModel : INotifyPropertyChanged
     public string OsType
     {
         get => _osType;
-        set => SetField(ref _osType, value);
+        set
+        {
+            if (SetField(ref _osType, value))
+            {
+                OnPropertyChanged(nameof(OsBadge));
+                OnPropertyChanged(nameof(OsIcon));
+            }
+        }
+    }
+
+    public string OsBadge => _osType.ToLowerInvariant() switch
+    {
+        "windows" => "🪟 Windows",
+        "macos" => "🍎 macOS",
+        "linux" => "🐧 Linux",
+        "chromeos" => "🌐 ChromeOS",
+        _ => "🖥️ " + _osType
+    };
+
+    public string OsIcon => _osType.ToLowerInvariant() switch
+    {
+        "windows" => "🪟",
+        "macos" => "🍎",
+        "linux" => "🐧",
+        "chromeos" => "🌐",
+        _ => "🖥️"
+    };
+
+    public string AgentVersion
+    {
+        get => _agentVersion;
+        set => SetField(ref _agentVersion, value);
+    }
+
+    public bool IsBroadcasting
+    {
+        get => _isBroadcasting;
+        set => SetField(ref _isBroadcasting, value);
     }
 
     public string LocalIp

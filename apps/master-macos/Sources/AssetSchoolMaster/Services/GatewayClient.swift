@@ -321,11 +321,15 @@ public class MasterGatewayClient: ObservableObject {
             let ip = item["localIp"] as? String ?? item["ip"] as? String ?? "127.0.0.1"
             let isLocked = (item["status"] as? String == "locked") || (item["isLocked"] as? Bool ?? false)
             let status: MasterDeviceStatus = isLocked ? .locked : .online
+            let mac = item["macAddress"] as? String ?? ""
+            let agentVer = item["agentVersion"] as? String ?? "1.0.0"
 
             if let existing = self.devices.first(where: { $0.id == id }) {
                 existing.hostname = hostname
                 existing.osType = os
                 existing.localIp = ip
+                existing.macAddress = mac.isEmpty ? existing.macAddress : mac
+                existing.agentVersion = agentVer
                 existing.status = status
                 existing.isLocked = isLocked
                 existing.currentStudentName = item["currentStudentName"] as? String ?? existing.currentStudentName
@@ -333,7 +337,7 @@ public class MasterGatewayClient: ObservableObject {
                 existing.lastHeartbeat = Date()
                 updated.append(existing)
             } else {
-                let dev = StudentDevice(id: id, hostname: hostname, osType: os, localIp: ip, status: status)
+                let dev = StudentDevice(id: id, hostname: hostname, osType: os, localIp: ip, macAddress: mac, agentVersion: agentVer, status: status)
                 dev.isLocked = isLocked
                 dev.currentStudentName = item["currentStudentName"] as? String
                 dev.classroomName = activeClassroom.name

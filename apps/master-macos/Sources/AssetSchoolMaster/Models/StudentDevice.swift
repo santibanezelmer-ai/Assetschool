@@ -31,6 +31,9 @@ public class StudentDevice: Identifiable, ObservableObject {
     @Published public var thumbnail: NSImage?
     @Published public var activeFps: Int = 0
     @Published public var activeBitrateKbps: Int = 0
+    @Published public var agentVersion: String = "1.0.0"
+    @Published public var isBroadcasting: Bool = false
+    @Published public var macAddress: String = ""
 
     public init(
         id: String,
@@ -38,6 +41,8 @@ public class StudentDevice: Identifiable, ObservableObject {
         osType: MasterDevicePlatform = .unknown,
         osVersion: String = "",
         localIp: String = "127.0.0.1",
+        macAddress: String = "",
+        agentVersion: String = "1.0.0",
         status: MasterDeviceStatus = .online,
         currentStudentName: String? = nil,
         classroomName: String? = "Laboratorio 1"
@@ -47,6 +52,8 @@ public class StudentDevice: Identifiable, ObservableObject {
         self.osType = osType
         self.osVersion = osVersion
         self.localIp = localIp
+        self.macAddress = macAddress
+        self.agentVersion = agentVersion
         self.status = status
         self.currentStudentName = currentStudentName
         self.classroomName = classroomName

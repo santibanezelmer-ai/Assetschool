@@ -70,12 +70,46 @@ public partial class MainWindow : Window
     private bool FilterDevice(object item)
     {
         if (item is not StudentDeviceViewModel dev) return false;
+
+        // 1. Multiplatform OS and Connection State Filter
+        bool matchesCriteria = _classroomVm.SelectedFilter switch
+        {
+            ClassroomFilterCriteria.All => true,
+            ClassroomFilterCriteria.Windows => dev.OsType.Equals("windows", StringComparison.OrdinalIgnoreCase),
+            ClassroomFilterCriteria.MacOS => dev.OsType.Equals("macos", StringComparison.OrdinalIgnoreCase),
+            ClassroomFilterCriteria.Connected => !dev.IsDisconnected,
+            ClassroomFilterCriteria.Disconnected => dev.IsDisconnected,
+            _ => true
+        };
+
+        if (!matchesCriteria) return false;
+
+        // 2. Search Text Filter
         string query = TxtSearch?.Text?.Trim().ToLowerInvariant() ?? "";
         if (string.IsNullOrEmpty(query)) return true;
 
         return dev.Hostname.ToLowerInvariant().Contains(query) ||
                dev.LocalIp.Contains(query) ||
+               dev.OsType.ToLowerInvariant().Contains(query) ||
+               dev.MacAddress.ToLowerInvariant().Contains(query) ||
                (dev.CurrentStudentName != null && dev.CurrentStudentName.ToLowerInvariant().Contains(query));
+    }
+
+    private void OnFilterCriteriaSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CmbFilterCriteria?.SelectedItem is ComboBoxItem item && item.Tag is string tag)
+        {
+            _classroomVm.SelectedFilter = tag switch
+            {
+                "Windows" => ClassroomFilterCriteria.Windows,
+                "MacOS" => ClassroomFilterCriteria.MacOS,
+                "Connected" => ClassroomFilterCriteria.Connected,
+                "Disconnected" => ClassroomFilterCriteria.Disconnected,
+                _ => ClassroomFilterCriteria.All
+            };
+            _devicesView?.Refresh();
+            UpdateStatsCounter();
+        }
     }
 
     private void OnSearchTextChanged(object sender, TextChangedEventArgs e)

@@ -97,7 +97,19 @@
                     <Border Width="1" Height="20" Background="#334155" Margin="14,0" />
 
                     <TextBlock Text="🔍" Foreground="#64748B" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <TextBox x:Name="TxtSearch" Width="200" Height="28" Background="#1E293B" Foreground="White" BorderBrush="#334155" VerticalContentAlignment="Center" Padding="6,0" TextChanged="OnSearchTextChanged" />
+                    <TextBox x:Name="TxtSearch" Width="180" Height="28" Background="#1E293B" Foreground="White" BorderBrush="#334155" VerticalContentAlignment="Center" Padding="6,0" TextChanged="OnSearchTextChanged" />
+
+                    <Border Width="1" Height="20" Background="#334155" Margin="12,0" />
+
+                    <!-- Multiplatform OS & State Filter -->
+                    <TextBlock Text="Filtro:" Foreground="#94A3B8" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox x:Name="CmbFilterCriteria" Width="130" Height="28" Background="#1E293B" Foreground="White" BorderBrush="#334155" SelectionChanged="OnFilterCriteriaSelectionChanged">
+                        <ComboBoxItem Content="Todos" IsSelected="True" Tag="All" />
+                        <ComboBoxItem Content="Windows" Tag="Windows" />
+                        <ComboBoxItem Content="macOS" Tag="MacOS" />
+                        <ComboBoxItem Content="Conectados" Tag="Connected" />
+                        <ComboBoxItem Content="Desconectados" Tag="Disconnected" />
+                    </ComboBox>
                 </StackPanel>
 
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
@@ -142,7 +154,7 @@
                                         <DockPanel>
                                             <Ellipse Width="8" Height="8" Fill="{Binding StatusColor}" Margin="0,0,6,0" VerticalAlignment="Center" />
                                             <TextBlock Text="{Binding Hostname}" Foreground="White" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
-                                            <TextBlock Text="{Binding OsType}" Foreground="#38BDF8" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding OsBadge}" Foreground="#38BDF8" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
                                             <TextBlock Text="🔒" Foreground="#F59E0B" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}" DockPanel.Dock="Right" />
                                         </DockPanel>
                                     </Border>
@@ -189,12 +201,13 @@
             <!-- DETAILED TABLE VIEW -->
             <DataGrid x:Name="DevicesDataGrid" Visibility="Collapsed" AutoGenerateColumns="False" CanUserAddRows="False" Background="#0F172A" Foreground="White" BorderThickness="0" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#1E293B" RowBackground="#0F172A" AlternatingRowBackground="#1E293B" MouseDoubleClick="OnDataGridRowDoubleClicked">
                 <DataGrid.Columns>
-                    <DataGridTextColumn Header="Equipo" Binding="{Binding Hostname}" Width="160" />
-                    <DataGridTextColumn Header="IP Local" Binding="{Binding LocalIp}" Width="140" />
-                    <DataGridTextColumn Header="Dirección MAC" Binding="{Binding MacAddress}" Width="160" />
-                    <DataGridTextColumn Header="Sistema" Binding="{Binding OsType}" Width="110" />
-                    <DataGridTextColumn Header="Estado" Binding="{Binding StatusDisplay}" Width="120" />
-                    <DataGridTextColumn Header="Bloqueado" Binding="{Binding IsLocked}" Width="90" />
+                    <DataGridTextColumn Header="Equipo" Binding="{Binding Hostname}" Width="150" />
+                    <DataGridTextColumn Header="IP Local" Binding="{Binding LocalIp}" Width="130" />
+                    <DataGridTextColumn Header="Dirección MAC" Binding="{Binding MacAddress}" Width="150" />
+                    <DataGridTextColumn Header="Sistema Operativo" Binding="{Binding OsBadge}" Width="130" />
+                    <DataGridTextColumn Header="Agente" Binding="{Binding AgentVersion}" Width="80" />
+                    <DataGridTextColumn Header="Estado" Binding="{Binding StatusDisplay}" Width="110" />
+                    <DataGridTextColumn Header="Bloqueado" Binding="{Binding IsLocked}" Width="80" />
                     <DataGridTemplateColumn Header="Acciones" Width="*">
                         <DataGridTemplateColumn.CellTemplate>
                             <DataTemplate>
