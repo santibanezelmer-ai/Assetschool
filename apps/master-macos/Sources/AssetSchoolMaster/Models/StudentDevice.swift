@@ -51,4 +51,41 @@ public class StudentDevice: Identifiable, ObservableObject {
         self.currentStudentName = currentStudentName
         self.classroomName = classroomName
     }
+
+    /// Returns true if more than 10 seconds elapsed since the last response or thumbnail
+    public var isConnectionStale: Bool {
+        return Date().timeIntervalSince(lastHeartbeat) > 10.0
+    }
+
+    /// Returns true if more than 30 seconds elapsed or status is offline
+    public var isDisconnected: Bool {
+        return status == .offline || Date().timeIntervalSince(lastHeartbeat) > 30.0
+    }
+
+    /// User-friendly last communication timestamp
+    public var lastCommunicationFormatted: String {
+        let diff = Int(Date().timeIntervalSince(lastHeartbeat))
+        if diff < 3 {
+            return "En tiempo real"
+        } else if diff < 60 {
+            return "Hace \(diff)s"
+        } else {
+            let mins = diff / 60
+            return "Hace \(mins)m"
+        }
+    }
+
+    public var osNameFormatted: String {
+        switch osType {
+        case .macos: return "macOS \(osVersion)"
+        case .windows: return "Windows \(osVersion)"
+        case .linux: return "Linux"
+        case .chromeos: return "ChromeOS"
+        case .unknown: return "Desconocido"
+        }
+    }
+
+    public func toggleSelected() {
+        self.isSelected.toggle()
+    }
 }

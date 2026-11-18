@@ -131,6 +131,12 @@ public final class RemoteInputService {
                     event.post(tap: .cghidEventTap)
                 }
             }
+
+        case "scroll", "wheel":
+            let delta = (y ?? 0.0) != 0 ? Int32(y!) : Int32((normY - 0.5) * 10.0)
+            if let event = CGEvent(scrollWheelEvent2Source: nil, units: .line, wheelCount: 1, wheel1: delta != 0 ? delta : 2, wheel2: 0, wheel3: 0) {
+                event.post(tap: .cghidEventTap)
+            }
             
         default:
             break

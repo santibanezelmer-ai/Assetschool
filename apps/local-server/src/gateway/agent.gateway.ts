@@ -1650,14 +1650,15 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     session.lastInputAt = Date.now();
     session.inputCount++;
 
+    const inputData = (body as any)?.input || body;
     const envelope = createEnvelope(PacketType.REMOTE_INPUT_EVENT, 'SERVER', 'server', {
       deviceId: session.deviceId,
-      type: body.type,
-      x: body.x,
-      y: body.y,
-      button: body.button,
-      keyCode: body.keyCode,
-      keyText: body.keyText,
+      type: inputData.type || body.type,
+      x: inputData.x ?? body.x,
+      y: inputData.y ?? body.y,
+      button: inputData.button ?? body.button,
+      keyCode: inputData.keyCode ?? body.keyCode,
+      keyText: inputData.keyText ?? body.keyText,
     });
     this.emitToSocket(session.agentSocketId, PacketType.REMOTE_INPUT_EVENT, envelope);
   }
@@ -1987,6 +1988,22 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     });
 
     client.emit('POPUP_MESSAGE_DISPATCHED', { messageId, deliveredCount });
+  }
+
+  @SubscribeMessage('MESSAGE_ACK')
+  handleMessageAck(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: any,
+  ) {
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent || !agent.institutionId) return;
+    const payload = body?.payload || body;
+    this.emitToInstitution(agent.institutionId, 'MESSAGE_ACK', {
+      deviceId: agent.deviceId,
+      messageId: payload?.messageId,
+      hostname: payload?.hostname || agent.hostname,
+      timestamp: payload?.timestamp || Date.now(),
+    });
   }
 
   // -------------------------------------------------------------

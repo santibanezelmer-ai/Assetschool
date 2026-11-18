@@ -3,131 +3,113 @@ import AppKit
 
 public struct MasterMainWindow: View {
     @ObservedObject var client = MasterGatewayClient.shared
+
     @State private var selectedDeviceForInspection: StudentDevice?
+    @State private var deviceForDirectMessage: StudentDevice?
+    @State private var deviceForDirectFile: StudentDevice?
+
     @State private var showMessageDialog = false
     @State private var showPowerDialog = false
-    @State private var messageText = "Por favor guarden silencio y presten atención."
-    @State private var messageTitle = "Aviso del Profesor"
-    @State private var selectedPowerAction = "reboot"
+    @State private var showFileDialog = false
+
+    @State private var viewMode: MasterViewMode = .grid
+    @State private var searchText: String = ""
     @State private var customIpAddress = "127.0.0.1"
 
     public init() {}
+
+    public var filteredDevices: [StudentDevice] {
+        if searchText.trimmingCharacters(in: .whitespaces).isEmpty {
+            return client.devices
+        }
+        return client.devices.filter { dev in
+            dev.hostname.localizedCaseInsensitiveContains(searchText) ||
+            dev.localIp.localizedCaseInsensitiveContains(searchText) ||
+            (dev.currentStudentName?.localizedCaseInsensitiveContains(searchText) ?? false)
+        }
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
             // ==========================================
             // TOP VEYON-STYLE RIBBON / TOOLBAR
             // ==========================================
-            HStack(spacing: 12) {
+            HStack(spacing: 8) {
                 // Group: Supervision
-                VStack(spacing: 4) {
-                    Image(systemName: "rectangle.grid.3x2.fill")
-                        .font(.system(size: 20))
-                        .foregroundColor(.blue)
-                    Text("Monitor")
-                        .font(.caption2)
-                        .fontWeight(.medium)
+                RibbonButton(
+                    title: "Monitor",
+                    systemImage: "rectangle.grid.3x2.fill",
+                    color: .blue,
+                    isActive: true
+                ) {
+                    viewMode = .grid
                 }
-                .frame(width: 58, height: 50)
-                .background(Color.blue.opacity(0.12))
-                .cornerRadius(8)
 
-                Divider().frame(height: 40)
+                Divider().frame(height: 38)
 
                 // Group: Pedagogical Lock (Veyon Lock)
-                Button(action: {
+                RibbonButton(
+                    title: "Bloquear Aula",
+                    systemImage: "lock.fill",
+                    color: .orange
+                ) {
                     client.lockAll()
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "lock.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.orange)
-                        Text("Bloquear")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .frame(width: 64, height: 50)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .background(Color.orange.opacity(0.12))
-                .cornerRadius(8)
 
-                Button(action: {
+                RibbonButton(
+                    title: "Desbloquear",
+                    systemImage: "lock.open.fill",
+                    color: .green
+                ) {
                     client.unlockAll()
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "lock.open.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.green)
-                        Text("Desbloquear")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .frame(width: 74, height: 50)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .background(Color.green.opacity(0.12))
-                .cornerRadius(8)
 
-                Divider().frame(height: 40)
+                Divider().frame(height: 38)
 
-                // Group: Screen Broadcast (Veyon Presentation)
-                Button(action: {
+                // Group: Screen Broadcast (Veyon Presentation / Mediasoup SFU)
+                RibbonButton(
+                    title: client.isBroadcastingScreen ? "Detener" : "Transmitir",
+                    systemImage: client.isBroadcastingScreen ? "stop.circle.fill" : "play.tv.fill",
+                    color: client.isBroadcastingScreen ? .red : .purple,
+                    isActive: client.isBroadcastingScreen
+                ) {
                     if client.isBroadcastingScreen {
                         client.stopTeacherBroadcast()
                     } else {
                         client.startTeacherBroadcast()
                     }
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: client.isBroadcastingScreen ? "stop.circle.fill" : "play.tv.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(client.isBroadcastingScreen ? .red : .purple)
-                        Text(client.isBroadcastingScreen ? "Detener" : "Transmitir")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .frame(width: 68, height: 50)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .background(client.isBroadcastingScreen ? Color.red.opacity(0.12) : Color.purple.opacity(0.12))
-                .cornerRadius(8)
+
+                Divider().frame(height: 38)
 
                 // Group: Messaging
-                Button(action: {
+                RibbonButton(
+                    title: "Mensaje",
+                    systemImage: "message.fill",
+                    color: .indigo
+                ) {
+                    deviceForDirectMessage = nil
                     showMessageDialog = true
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "message.fill")
-                            .font(.system(size: 20))
-                            .foregroundColor(.indigo)
-                        Text("Mensaje")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .frame(width: 58, height: 50)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .background(Color.indigo.opacity(0.12))
-                .cornerRadius(8)
+
+                // Group: File Transfer & Distribution
+                RibbonButton(
+                    title: "Archivos",
+                    systemImage: "folder.badge.gearshape",
+                    color: .teal
+                ) {
+                    deviceForDirectFile = nil
+                    showFileDialog = true
+                }
 
                 // Group: Power Management (Reboot, Shutdown, Logout)
-                Button(action: {
+                RibbonButton(
+                    title: "Energía",
+                    systemImage: "power",
+                    color: .red
+                ) {
                     showPowerDialog = true
-                }) {
-                    VStack(spacing: 4) {
-                        Image(systemName: "power")
-                            .font(.system(size: 20))
-                            .foregroundColor(.red)
-                        Text("Energía")
-                            .font(.caption2)
-                            .fontWeight(.medium)
-                    }
-                    .frame(width: 58, height: 50)
                 }
-                .buttonStyle(PlainButtonStyle())
-                .background(Color.red.opacity(0.12))
-                .cornerRadius(8)
 
                 Spacer()
 
@@ -141,7 +123,7 @@ public struct MasterMainWindow: View {
                             .font(.caption)
                             .fontWeight(.semibold)
                     }
-                    Text("\(client.devices.count) alumnos detectados")
+                    Text("\(client.devices.count) equipos en \(client.activeClassroom.name)")
                         .font(.caption2)
                         .foregroundColor(.secondary)
                 }
@@ -150,9 +132,10 @@ public struct MasterMainWindow: View {
                     client.connect(host: customIpAddress, port: 3000)
                 }) {
                     Image(systemName: "arrow.clockwise")
-                        .padding(6)
+                        .padding(5)
                 }
                 .buttonStyle(BorderedButtonStyle())
+                .help("Reconectar al servidor")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
@@ -170,15 +153,20 @@ public struct MasterMainWindow: View {
             if client.isBroadcastingScreen {
                 HStack(spacing: 12) {
                     Circle()
-                        .fill(Color.red)
+                        .fill(Color.white)
                         .frame(width: 10, height: 10)
+                        .overlay(
+                            Circle()
+                                .stroke(Color.red, lineWidth: 2)
+                                .scaleEffect(1.4)
+                        )
                     Text("TRANSMITIENDO PANTALLA EN VIVO")
                         .font(.caption)
                         .fontWeight(.bold)
                         .foregroundColor(.white)
-                    Text("— Distribuyendo señal H.264 (Mediasoup SFU) a \(client.devices.count) estudiantes")
+                    Text("— Distribuyendo señal H.264 (Mediasoup SFU LAN) a \(client.devices.count) alumnos en \(client.activeClassroom.name)")
                         .font(.caption)
-                        .foregroundColor(.white.opacity(0.9))
+                        .foregroundColor(.white.opacity(0.92))
                     Spacer()
                     Button("Detener Transmisión") {
                         client.stopTeacherBroadcast()
@@ -189,12 +177,111 @@ public struct MasterMainWindow: View {
                     .controlSize(.small)
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.vertical, 7)
                 .background(Color.red)
             }
 
             // ==========================================
-            // MAIN WORKSPACE: CLASSROOM GRID
+            // CLASSROOM & FILTER CONTROL SUB-BAR
+            // ==========================================
+            HStack(spacing: 12) {
+                // Classroom selector dropdown
+                HStack(spacing: 6) {
+                    Image(systemName: "building.2.crop.circle")
+                        .foregroundColor(.secondary)
+                    Picker("Aula:", selection: Binding(
+                        get: { client.activeClassroom.id },
+                        set: { newId in
+                            if let found = client.availableClassrooms.first(where: { $0.id == newId }) {
+                                client.switchClassroom(to: found)
+                            }
+                        }
+                    )) {
+                        ForEach(client.availableClassrooms) { room in
+                            Text(room.name).tag(room.id)
+                        }
+                    }
+                    .pickerStyle(MenuPickerStyle())
+                    .frame(width: 170)
+                }
+
+                Divider().frame(height: 20)
+
+                // Search box
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .foregroundColor(.secondary)
+                    TextField("Filtrar por estudiante, equipo o IP...", text: $searchText)
+                        .textFieldStyle(PlainTextFieldStyle())
+                    if !searchText.isEmpty {
+                        Button(action: { searchText = "" }) {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(PlainButtonStyle())
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(Color(NSColor.textBackgroundColor))
+                .cornerRadius(6)
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.gray.opacity(0.25), lineWidth: 1))
+                .frame(maxWidth: 320)
+
+                Divider().frame(height: 20)
+
+                // Bulk selection helpers
+                HStack(spacing: 6) {
+                    Button("Todos") { client.selectAll() }
+                        .buttonStyle(BorderedButtonStyle())
+                        .controlSize(.small)
+                    Button("Ninguno") { client.deselectAll() }
+                        .buttonStyle(BorderedButtonStyle())
+                        .controlSize(.small)
+
+                    if !client.selectedDevices.isEmpty {
+                        Text("\(client.selectedDevices.count) selecc.")
+                            .font(.caption2)
+                            .foregroundColor(.blue)
+                            .fontWeight(.semibold)
+
+                        Button(action: { client.lockSelected() }) {
+                            Label("Bloquear", systemImage: "lock.fill")
+                        }
+                        .buttonStyle(BorderedButtonStyle())
+                        .controlSize(.small)
+
+                        Button(action: { client.unlockSelected() }) {
+                            Label("Desbloquear", systemImage: "lock.open.fill")
+                        }
+                        .buttonStyle(BorderedButtonStyle())
+                        .controlSize(.small)
+                    }
+                }
+
+                Spacer()
+
+                // View Mode Toggle (Grid vs List)
+                Picker("", selection: $viewMode) {
+                    ForEach(MasterViewMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.iconName).tag(mode)
+                    }
+                }
+                .pickerStyle(SegmentedPickerStyle())
+                .frame(width: 170)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(Color(NSColor.controlBackgroundColor))
+            .overlay(
+                Rectangle()
+                    .frame(height: 1)
+                    .foregroundColor(Color.gray.opacity(0.15)),
+                alignment: .bottom
+            )
+
+            // ==========================================
+            // MAIN WORKSPACE: CLASSROOM GRID OR LIST
             // ==========================================
             if client.devices.isEmpty {
                 VStack(spacing: 16) {
@@ -202,15 +289,16 @@ public struct MasterMainWindow: View {
                     Image(systemName: "desktopcomputer")
                         .font(.system(size: 48))
                         .foregroundColor(.secondary)
-                    Text("No hay computadoras de estudiantes conectadas")
+                    Text("No hay computadoras de estudiantes conectadas en \(client.activeClassroom.name)")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Text("Los agentes de Windows y macOS se anunciarán automáticamente por la red LAN (puerto UDP 48500).")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
-                        .frame(maxWidth: 400)
-                    HStack {
+                        .frame(maxWidth: 420)
+
+                    HStack(spacing: 8) {
                         TextField("IP del Servidor", text: $customIpAddress)
                             .textFieldStyle(RoundedBorderTextFieldStyle())
                             .frame(width: 140)
@@ -222,17 +310,40 @@ public struct MasterMainWindow: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Color(NSColor.controlBackgroundColor))
-            } else {
+            } else if viewMode == .grid {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 220, maximum: 300), spacing: 16)], spacing: 16) {
-                        ForEach(client.devices) { device in
-                            StudentTileView(device: device) {
-                                selectedDeviceForInspection = device
-                            }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 230, maximum: 310), spacing: 16)], spacing: 16) {
+                        ForEach(filteredDevices) { device in
+                            StudentTileView(
+                                device: device,
+                                onInspect: { selectedDeviceForInspection = device },
+                                onMessage: {
+                                    deviceForDirectMessage = device
+                                    showMessageDialog = true
+                                },
+                                onSendFile: {
+                                    deviceForDirectFile = device
+                                    showFileDialog = true
+                                }
+                            )
                         }
                     }
                     .padding(16)
                 }
+                .background(Color(NSColor.controlBackgroundColor))
+            } else {
+                StudentTableView(
+                    devices: filteredDevices,
+                    onInspect: { dev in selectedDeviceForInspection = dev },
+                    onMessage: { dev in
+                        deviceForDirectMessage = dev
+                        showMessageDialog = true
+                    },
+                    onSendFile: { dev in
+                        deviceForDirectFile = dev
+                        showFileDialog = true
+                    }
+                )
                 .background(Color(NSColor.controlBackgroundColor))
             }
 
@@ -240,12 +351,25 @@ public struct MasterMainWindow: View {
             // BOTTOM STATUS BAR
             // ==========================================
             HStack {
+                Circle()
+                    .fill(client.isConnected ? Color.green : Color.red)
+                    .frame(width: 7, height: 7)
+
                 Text(client.lastLog.isEmpty ? "AssetSchool Master listo para supervisión." : client.lastLog)
                     .font(.caption2)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+
                 Spacer()
-                Text("Veyon Functional Parity Suite • Protocol v1.0")
+
+                if let ack = client.lastMessageAck {
+                    Text("✓ Aviso leído por \(ack.hostname)")
+                        .font(.caption2)
+                        .foregroundColor(.green)
+                        .padding(.trailing, 8)
+                }
+
+                Text("AssetSchool Veyon Suite • LAN WebRTC SFU • Protocol v1.0")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -259,10 +383,19 @@ public struct MasterMainWindow: View {
                 alignment: .top
             )
         }
-        .frame(minWidth: 800, minHeight: 600)
-        // Dialogs
+        .frame(minWidth: 860, minHeight: 620)
+        // Sheets
         .sheet(isPresented: $showMessageDialog) {
-            MessageBroadcastSheet(isPresented: $showMessageDialog)
+            MessageBroadcastSheet(
+                isPresented: $showMessageDialog,
+                targetDevice: deviceForDirectMessage
+            )
+        }
+        .sheet(isPresented: $showFileDialog) {
+            FileTransferSheet(
+                isPresented: $showFileDialog,
+                targetDevice: deviceForDirectFile
+            )
         }
         .sheet(isPresented: $showPowerDialog) {
             PowerManagementSheet(isPresented: $showPowerDialog)
@@ -277,42 +410,79 @@ public struct MasterMainWindow: View {
 }
 
 // ==========================================
-// STUDENT TILE COMPONENT
+// RIBBON BUTTON COMPONENT
+// ==========================================
+struct RibbonButton: View {
+    let title: String
+    let systemImage: String
+    let color: Color
+    var isActive: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 18))
+                    .foregroundColor(color)
+                Text(title)
+                    .font(.system(size: 10, weight: .medium))
+                    .lineLimit(1)
+            }
+            .frame(width: 68, height: 46)
+        }
+        .buttonStyle(PlainButtonStyle())
+        .background(isActive ? color.opacity(0.18) : Color.gray.opacity(0.08))
+        .cornerRadius(6)
+    }
+}
+
+// ==========================================
+// STUDENT TILE COMPONENT (GRID VIEW)
 // ==========================================
 struct StudentTileView: View {
     @ObservedObject var device: StudentDevice
     var onInspect: () -> Void
+    var onMessage: () -> Void
+    var onSendFile: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header: Hostname + OS Icon + Lock indicator
-            HStack {
-                HStack(spacing: 4) {
-                    Image(systemName: osIcon(device.osType))
-                        .foregroundColor(.secondary)
-                    Text(device.hostname)
-                        .font(.caption)
-                        .fontWeight(.bold)
-                        .lineLimit(1)
+            // Header: Selection Checkbox + Hostname + OS Icon + Status
+            HStack(spacing: 6) {
+                Button(action: { device.toggleSelected() }) {
+                    Image(systemName: device.isSelected ? "checkmark.circle.fill" : "circle")
+                        .foregroundColor(device.isSelected ? .blue : .secondary)
+                        .font(.system(size: 13))
                 }
+                .buttonStyle(PlainButtonStyle())
+
+                Image(systemName: osIcon(device.osType))
+                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+
+                Text(device.hostname)
+                    .font(.system(size: 11, weight: .bold))
+                    .lineLimit(1)
 
                 Spacer()
 
                 if device.isLocked {
                     Image(systemName: "lock.fill")
                         .foregroundColor(.orange)
-                        .font(.caption2)
+                        .font(.system(size: 11))
                 }
 
+                // Connection status dot
                 Circle()
-                    .fill(device.status == .online ? Color.green : (device.status == .locked ? Color.orange : Color.gray))
+                    .fill(statusColor)
                     .frame(width: 8, height: 8)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
             .background(Color(NSColor.windowBackgroundColor))
 
-            // Screen Frame / Thumbnail
+            // Screen Frame / Live Thumbnail
             ZStack {
                 Color.black
 
@@ -331,34 +501,91 @@ struct StudentTileView: View {
                     }
                 }
 
-                // If locked, overlay lock banner
+                // Stale connection overlay
+                if device.isDisconnected {
+                    Color.black.opacity(0.75)
+                    VStack(spacing: 4) {
+                        Image(systemName: "wifi.slash")
+                            .font(.system(size: 24))
+                            .foregroundColor(.gray)
+                        Text("DESCONECTADO")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundColor(.gray)
+                        Text(device.lastCommunicationFormatted)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                    }
+                } else if device.isConnectionStale {
+                    VStack {
+                        HStack {
+                            Spacer()
+                            Label("Sin respuesta reciente", systemImage: "exclamationmark.triangle.fill")
+                                .font(.system(size: 9, weight: .semibold))
+                                .padding(4)
+                                .background(Color.yellow.opacity(0.9))
+                                .foregroundColor(.black)
+                                .cornerRadius(4)
+                                .padding(6)
+                        }
+                        Spacer()
+                    }
+                }
+
+                // Locked overlay
                 if device.isLocked {
                     Color.black.opacity(0.65)
                     VStack(spacing: 4) {
                         Image(systemName: "lock.shield.fill")
-                            .font(.system(size: 24))
+                            .font(.system(size: 26))
                             .foregroundColor(.orange)
-                        Text("BLOQUEADO")
+                        Text("PAUSA PEDAGÓGICA")
                             .font(.system(size: 10, weight: .bold))
                             .foregroundColor(.orange)
+                    }
+                }
+
+                // Active teacher broadcast badge
+                if MasterGatewayClient.shared.isBroadcastingScreen {
+                    VStack {
+                        Spacer()
+                        HStack {
+                            Label("Recibiendo Pantalla Docente", systemImage: "tv.fill")
+                                .font(.system(size: 8, weight: .bold))
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Color.purple.opacity(0.85))
+                                .foregroundColor(.white)
+                                .cornerRadius(4)
+                                .padding(4)
+                            Spacer()
+                        }
                     }
                 }
             }
             .frame(height: 140)
 
-            // Footer: Student info and action buttons
+            // Footer: Student Info and Quick Actions
             HStack(spacing: 6) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(device.currentStudentName ?? "Alumno")
+                    Text(device.currentStudentName ?? "Estudiante")
                         .font(.system(size: 11, weight: .semibold))
                         .lineLimit(1)
-                    Text(device.localIp)
-                        .font(.system(size: 9))
-                        .foregroundColor(.secondary)
+                    HStack(spacing: 4) {
+                        Text(device.localIp)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text("•")
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                        Text(device.lastCommunicationFormatted)
+                            .font(.system(size: 9))
+                            .foregroundColor(device.isConnectionStale ? .orange : .secondary)
+                    }
                 }
 
                 Spacer()
 
+                // Actions: Inspect
                 Button(action: onInspect) {
                     Image(systemName: "eye.fill")
                         .font(.system(size: 11))
@@ -367,6 +594,7 @@ struct StudentTileView: View {
                 .buttonStyle(BorderedButtonStyle())
                 .help("Inspeccionar / Control Remoto")
 
+                // Actions: Lock / Unlock
                 Button(action: {
                     if device.isLocked {
                         MasterGatewayClient.shared.unlockDevice(id: device.id)
@@ -380,7 +608,27 @@ struct StudentTileView: View {
                         .padding(4)
                 }
                 .buttonStyle(BorderedButtonStyle())
-                .help(device.isLocked ? "Desbloquear" : "Bloquear")
+                .help(device.isLocked ? "Desbloquear estación" : "Bloquear estación")
+
+                // Actions: Message
+                Button(action: onMessage) {
+                    Image(systemName: "message")
+                        .font(.system(size: 11))
+                        .foregroundColor(.indigo)
+                        .padding(4)
+                }
+                .buttonStyle(BorderedButtonStyle())
+                .help("Enviar mensaje a este estudiante")
+
+                // Actions: File Send
+                Button(action: onSendFile) {
+                    Image(systemName: "arrow.up.doc")
+                        .font(.system(size: 11))
+                        .foregroundColor(.teal)
+                        .padding(4)
+                }
+                .buttonStyle(BorderedButtonStyle())
+                .help("Enviar archivo a este estudiante")
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -389,9 +637,24 @@ struct StudentTileView: View {
         .cornerRadius(8)
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .stroke(device.isLocked ? Color.orange.opacity(0.6) : Color.gray.opacity(0.25), lineWidth: 1)
+                .stroke(borderStrokeColor, lineWidth: device.isSelected ? 2 : 1)
         )
-        .shadow(color: Color.black.opacity(0.05), radius: 3, x: 0, y: 1)
+        .shadow(color: Color.black.opacity(0.04), radius: 3, x: 0, y: 1)
+    }
+
+    private var statusColor: Color {
+        if device.isDisconnected { return .gray }
+        if device.isConnectionStale { return .yellow }
+        if device.isLocked { return .orange }
+        return .green
+    }
+
+    private var borderStrokeColor: Color {
+        if device.isSelected { return .blue }
+        if device.isDisconnected { return .gray.opacity(0.3) }
+        if device.isConnectionStale { return .yellow.opacity(0.7) }
+        if device.isLocked { return .orange.opacity(0.6) }
+        return .gray.opacity(0.2)
     }
 
     private func osIcon(_ platform: MasterDevicePlatform) -> String {
@@ -406,18 +669,157 @@ struct StudentTileView: View {
 }
 
 // ==========================================
+// STUDENT TABLE VIEW (LIST VIEW)
+// ==========================================
+struct StudentTableView: View {
+    let devices: [StudentDevice]
+    var onInspect: (StudentDevice) -> Void
+    var onMessage: (StudentDevice) -> Void
+    var onSendFile: (StudentDevice) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Table Header
+            HStack(spacing: 8) {
+                Text("ESTADO").font(.caption2).fontWeight(.bold).frame(width: 70, alignment: .leading)
+                Text("EQUIPO").font(.caption2).fontWeight(.bold).frame(width: 130, alignment: .leading)
+                Text("ESTUDIANTE").font(.caption2).fontWeight(.bold).frame(width: 140, alignment: .leading)
+                Text("IP").font(.caption2).fontWeight(.bold).frame(width: 110, alignment: .leading)
+                Text("SISTEMA").font(.caption2).fontWeight(.bold).frame(width: 110, alignment: .leading)
+                Text("ÚLTIMA SEÑAL").font(.caption2).fontWeight(.bold).frame(width: 100, alignment: .leading)
+                Spacer()
+                Text("ACCIONES").font(.caption2).fontWeight(.bold).frame(width: 140, alignment: .trailing)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 8)
+            .background(Color(NSColor.windowBackgroundColor))
+            .overlay(Rectangle().frame(height: 1).foregroundColor(Color.gray.opacity(0.2)), alignment: .bottom)
+
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(devices) { dev in
+                        HStack(spacing: 8) {
+                            // Checkbox + status dot
+                            HStack(spacing: 6) {
+                                Button(action: { dev.toggleSelected() }) {
+                                    Image(systemName: dev.isSelected ? "checkmark.circle.fill" : "circle")
+                                        .foregroundColor(dev.isSelected ? .blue : .secondary)
+                                }
+                                .buttonStyle(PlainButtonStyle())
+
+                                Circle()
+                                    .fill(dev.isDisconnected ? Color.gray : (dev.isConnectionStale ? Color.yellow : (dev.isLocked ? Color.orange : Color.green)))
+                                    .frame(width: 7, height: 7)
+
+                                Text(dev.isDisconnected ? "Off" : (dev.isLocked ? "Bloq" : "Online"))
+                                    .font(.caption2)
+                                    .foregroundColor(.secondary)
+                            }
+                            .frame(width: 70, alignment: .leading)
+
+                            Text(dev.hostname)
+                                .font(.system(size: 12, weight: .bold))
+                                .frame(width: 130, alignment: .leading)
+                                .lineLimit(1)
+
+                            Text(dev.currentStudentName ?? "Alumno")
+                                .font(.system(size: 12))
+                                .frame(width: 140, alignment: .leading)
+                                .lineLimit(1)
+
+                            Text(dev.localIp)
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundColor(.secondary)
+                                .frame(width: 110, alignment: .leading)
+
+                            Text(dev.osNameFormatted)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                                .frame(width: 110, alignment: .leading)
+
+                            Text(dev.lastCommunicationFormatted)
+                                .font(.caption2)
+                                .foregroundColor(dev.isConnectionStale ? .orange : .secondary)
+                                .frame(width: 100, alignment: .leading)
+
+                            Spacer()
+
+                            // Action buttons
+                            HStack(spacing: 6) {
+                                Button("Ver") { onInspect(dev) }
+                                    .buttonStyle(BorderedButtonStyle())
+                                    .controlSize(.small)
+
+                                Button(action: {
+                                    if dev.isLocked {
+                                        MasterGatewayClient.shared.unlockDevice(id: dev.id)
+                                    } else {
+                                        MasterGatewayClient.shared.lockDevice(id: dev.id)
+                                    }
+                                }) {
+                                    Image(systemName: dev.isLocked ? "lock.open.fill" : "lock.fill")
+                                        .foregroundColor(dev.isLocked ? .green : .orange)
+                                }
+                                .buttonStyle(BorderedButtonStyle())
+                                .controlSize(.small)
+
+                                Button(action: { onMessage(dev) }) {
+                                    Image(systemName: "message")
+                                        .foregroundColor(.indigo)
+                                }
+                                .buttonStyle(BorderedButtonStyle())
+                                .controlSize(.small)
+
+                                Button(action: { onSendFile(dev) }) {
+                                    Image(systemName: "arrow.up.doc")
+                                        .foregroundColor(.teal)
+                                }
+                                .buttonStyle(BorderedButtonStyle())
+                                .controlSize(.small)
+                            }
+                            .frame(width: 140, alignment: .trailing)
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 8)
+                        .background(dev.isSelected ? Color.blue.opacity(0.08) : Color.clear)
+                        .overlay(Rectangle().frame(height: 1).foregroundColor(Color.gray.opacity(0.1)), alignment: .bottom)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==========================================
 // MESSAGE BROADCAST SHEET
 // ==========================================
 struct MessageBroadcastSheet: View {
     @Binding var isPresented: Bool
+    var targetDevice: StudentDevice? = nil
+
     @State private var title = "Aviso del Profesor"
     @State private var message = ""
     @State private var priority = "normal"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Enviar Mensaje a Estudiantes")
-                .font(.headline)
+            HStack {
+                Image(systemName: "message.fill")
+                    .foregroundColor(.indigo)
+                    .font(.title2)
+                Text(targetDevice != nil ? "Enviar Mensaje a \(targetDevice!.hostname)" : "Enviar Mensaje a Toda el Aula")
+                    .font(.headline)
+            }
+
+            if let target = targetDevice {
+                Text("Destinatario: \(target.currentStudentName ?? "Estudiante") (\(target.localIp))")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } else {
+                Text("Destinatario: Todos los estudiantes de \(MasterGatewayClient.shared.activeClassroom.name)")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
 
             TextField("Título del Aviso", text: $title)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
@@ -441,8 +843,13 @@ struct MessageBroadcastSheet: View {
 
                 Spacer()
 
-                Button("Enviar a toda el aula") {
-                    MasterGatewayClient.shared.sendPopupMessage(title: title, message: message, priority: priority)
+                Button("Enviar Mensaje") {
+                    MasterGatewayClient.shared.sendPopupMessage(
+                        title: title,
+                        message: message,
+                        targetDeviceId: targetDevice?.id,
+                        priority: priority
+                    )
                     isPresented = false
                 }
                 .buttonStyle(BorderedProminentButtonStyle())
@@ -450,7 +857,125 @@ struct MessageBroadcastSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 440)
+        .frame(width: 460)
+    }
+}
+
+// ==========================================
+// FILE TRANSFER SHEET
+// ==========================================
+struct FileTransferSheet: View {
+    @Binding var isPresented: Bool
+    var targetDevice: StudentDevice? = nil
+
+    @ObservedObject var client = MasterGatewayClient.shared
+    @State private var selectedFileUrl: URL? = nil
+    @State private var isSelectingFile = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: "folder.badge.gearshape")
+                    .foregroundColor(.teal)
+                    .font(.title2)
+                Text(targetDevice != nil ? "Distribuir Archivo a \(targetDevice!.hostname)" : "Distribuir Archivo a Toda el Aula")
+                    .font(.headline)
+            }
+
+            Text("El archivo se transferirá a la carpeta de trabajo escolar (~/Downloads/AssetSchool) con verificación criptográfica SHA-256.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            // File selection
+            HStack {
+                if let url = selectedFileUrl {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(url.lastPathComponent)
+                            .font(.system(size: 12, weight: .bold))
+                        Text(url.path)
+                            .font(.system(size: 9))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                    }
+                } else {
+                    Text("Ningún archivo seleccionado")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                }
+
+                Spacer()
+
+                Button("Seleccionar Archivo...") {
+                    selectFile()
+                }
+            }
+            .padding(10)
+            .background(Color(NSColor.controlBackgroundColor))
+            .cornerRadius(6)
+
+            // Progress or status
+            if let active = client.activeTransfer {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(active.status.rawValue)
+                            .font(.caption)
+                            .fontWeight(.semibold)
+                        Spacer()
+                        if !active.sha256.isEmpty {
+                            Text("SHA-256: \(active.sha256.prefix(12))...")
+                                .font(.system(size: 9, design: .monospaced))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+
+                    ProgressView(value: active.progress, total: 1.0)
+                        .progressViewStyle(LinearProgressViewStyle())
+
+                    if let err = active.errorMessage {
+                        Text("Error: \(err)")
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                    }
+                }
+                .padding(10)
+                .background(Color.blue.opacity(0.06))
+                .cornerRadius(6)
+            }
+
+            HStack {
+                Button("Cerrar") {
+                    isPresented = false
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button("Distribuir Archivo") {
+                    guard let url = selectedFileUrl else { return }
+                    client.sendFile(
+                        fileUrl: url,
+                        toDeviceId: targetDevice?.id,
+                        isBroadcast: targetDevice == nil
+                    )
+                }
+                .buttonStyle(BorderedProminentButtonStyle())
+                .disabled(selectedFileUrl == nil)
+            }
+        }
+        .padding(20)
+        .frame(width: 480)
+    }
+
+    private func selectFile() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK, let url = panel.url {
+            self.selectedFileUrl = url
+        }
     }
 }
 
@@ -464,8 +989,13 @@ struct PowerManagementSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Administración de Energía de Estaciones")
-                .font(.headline)
+            HStack {
+                Image(systemName: "power")
+                    .foregroundColor(.red)
+                    .font(.title2)
+                Text("Administración de Energía del Aula")
+                    .font(.headline)
+            }
 
             Picker("Acción", selection: $operation) {
                 Text("Reiniciar Equipos").tag("reboot")
@@ -492,7 +1022,7 @@ struct PowerManagementSheet: View {
             }
         }
         .padding(20)
-        .frame(width: 400)
+        .frame(width: 420)
     }
 }
 
@@ -503,19 +1033,65 @@ struct DeviceInspectionSheet: View {
     @ObservedObject var device: StudentDevice
     @Environment(\.dismiss) var dismiss
 
+    @State private var remoteFiles: [RemoteFileItem] = []
+    @State private var showWorkExplorer = false
+
     var body: some View {
         VStack(spacing: 0) {
+            // Header Bar
             HStack {
-                Text("Control e Inspección: \(device.hostname) (\(device.localIp))")
-                    .font(.headline)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text("Supervisión y Control Remoto:")
+                            .font(.headline)
+                        Text(device.hostname)
+                            .font(.headline)
+                            .fontWeight(.bold)
+                    }
+                    HStack(spacing: 8) {
+                        Text(device.currentStudentName ?? "Alumno")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(device.localIp)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(device.osNameFormatted)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 Spacer()
+
+                // Lock toggle button
+                Button(action: {
+                    if device.isLocked {
+                        MasterGatewayClient.shared.unlockDevice(id: device.id)
+                    } else {
+                        MasterGatewayClient.shared.lockDevice(id: device.id)
+                    }
+                }) {
+                    Label(device.isLocked ? "Desbloquear" : "Bloquear", systemImage: device.isLocked ? "lock.open.fill" : "lock.fill")
+                        .foregroundColor(device.isLocked ? .green : .orange)
+                }
+                .buttonStyle(BorderedButtonStyle())
+
                 Button("Cerrar") {
                     dismiss()
                 }
+                .keyboardShortcut(.cancelAction)
             }
-            .padding()
+            .padding(12)
             .background(Color(NSColor.windowBackgroundColor))
+            .overlay(Rectangle().frame(height: 1).foregroundColor(Color.gray.opacity(0.2)), alignment: .bottom)
 
+            // Screen Viewport with Mouse & Key Gestures
             GeometryReader { geo in
                 ZStack {
                     Color.black
@@ -532,9 +1108,26 @@ struct DeviceInspectionSheet: View {
                                 .foregroundColor(.gray)
                         }
                     }
+
+                    // Disconnection Warning Overlay
+                    if device.isDisconnected {
+                        Color.black.opacity(0.8)
+                        VStack(spacing: 8) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.system(size: 32))
+                                .foregroundColor(.yellow)
+                            Text("Señal no disponible — Estación Desconectada")
+                                .font(.headline)
+                                .foregroundColor(.white)
+                            Text("Última comunicación: \(device.lastCommunicationFormatted)")
+                                .font(.caption)
+                                .foregroundColor(.gray)
+                        }
+                    }
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
                 .contentShape(Rectangle())
+                // Left Click
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onEnded { value in
@@ -549,40 +1142,107 @@ struct DeviceInspectionSheet: View {
                             )
                         }
                 )
-            }
-            .frame(minWidth: 700, minHeight: 450)
-
-            HStack(spacing: 12) {
-                Button(action: {
-                    if device.isLocked {
-                        MasterGatewayClient.shared.unlockDevice(id: device.id)
-                    } else {
-                        MasterGatewayClient.shared.lockDevice(id: device.id)
+                // Right Click via Context Menu
+                .contextMenu {
+                    Button("Clic Derecho Aquí") {
+                        MasterGatewayClient.shared.sendRemoteInput(
+                            deviceId: device.id,
+                            type: "click",
+                            x: 0.5,
+                            y: 0.5,
+                            button: "right"
+                        )
                     }
-                }) {
-                    Label(device.isLocked ? "Desbloquear" : "Bloquear", systemImage: device.isLocked ? "lock.open.fill" : "lock.fill")
+                    Button("Doble Clic") {
+                        MasterGatewayClient.shared.sendRemoteInput(
+                            deviceId: device.id,
+                            type: "doubleclick",
+                            x: 0.5,
+                            y: 0.5,
+                            button: "left"
+                        )
+                    }
+                    Divider()
+                    Button("Explorar Carpeta de Trabajos") {
+                        showWorkExplorer = true
+                        MasterGatewayClient.shared.listRemoteDirectory(deviceId: device.id) { items in
+                            self.remoteFiles = items
+                        }
+                    }
                 }
+            }
+            .frame(minWidth: 760, minHeight: 480)
+
+            // Footer Control Bar
+            HStack(spacing: 12) {
+                HStack(spacing: 6) {
+                    Circle()
+                        .fill(device.isDisconnected ? Color.gray : Color.green)
+                        .frame(width: 8, height: 8)
+                    Text("Estado: \(device.lastCommunicationFormatted)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Spacer()
 
                 Button(action: {
                     MasterGatewayClient.shared.powerAction(operation: "reboot", targetDeviceId: device.id)
                 }) {
                     Label("Reiniciar", systemImage: "arrow.counterclockwise")
                 }
+                .buttonStyle(BorderedButtonStyle())
+                .controlSize(.small)
 
                 Button(action: {
                     MasterGatewayClient.shared.powerAction(operation: "shutdown", targetDeviceId: device.id)
                 }) {
                     Label("Apagar", systemImage: "power")
                 }
+                .buttonStyle(BorderedButtonStyle())
+                .controlSize(.small)
 
-                Spacer()
-
-                Text("Haga clic sobre la pantalla para inyectar ratón y teclado")
-                    .font(.caption)
+                Text("Haga clic para interactuar • Clic secundario para menú")
+                    .font(.caption2)
                     .foregroundColor(.secondary)
             }
-            .padding(12)
+            .padding(10)
             .background(Color(NSColor.windowBackgroundColor))
+            .overlay(Rectangle().frame(height: 1).foregroundColor(Color.gray.opacity(0.2)), alignment: .top)
+        }
+        // Sheet for Remote Work Explorer
+        .sheet(isPresented: $showWorkExplorer) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Carpeta Escolar Remota: \(device.hostname)")
+                        .font(.headline)
+                    Spacer()
+                    Button("Cerrar") { showWorkExplorer = false }
+                }
+
+                if remoteFiles.isEmpty {
+                    Text("No hay archivos en la carpeta escolar de este estudiante.")
+                        .foregroundColor(.secondary)
+                        .padding()
+                } else {
+                    List(remoteFiles) { file in
+                        HStack {
+                            Image(systemName: file.iconName)
+                            Text(file.name)
+                            Spacer()
+                            Text(file.formattedSize).foregroundColor(.secondary).font(.caption)
+                            Button("Recolectar") {
+                                MasterGatewayClient.shared.collectFile(deviceId: device.id, filePath: file.path)
+                            }
+                            .buttonStyle(BorderedButtonStyle())
+                            .controlSize(.small)
+                        }
+                    }
+                    .frame(height: 250)
+                }
+            }
+            .padding()
+            .frame(width: 480)
         }
     }
 }

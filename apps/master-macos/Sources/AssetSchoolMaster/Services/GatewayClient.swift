@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import CryptoKit
 
 public class MasterGatewayClient: ObservableObject {
     public static let shared = MasterGatewayClient()
@@ -12,14 +13,44 @@ public class MasterGatewayClient: ObservableObject {
     @Published public var statusMessage: String = "Desconectado"
     @Published public var isBroadcastingScreen: Bool = false
     @Published public var lastLog: String = ""
+
+    // Classroom state
+    @Published public var activeClassroom: ClassroomInfo = ClassroomInfo(
+        id: "d1111111-1111-1111-1111-111111111111",
+        name: "Laboratorio 1",
+        description: "Aula Informática Principal"
+    )
+    @Published public var availableClassrooms: [ClassroomInfo] = [
+        ClassroomInfo(id: "d1111111-1111-1111-1111-111111111111", name: "Laboratorio 1", description: "Aula Informática Principal"),
+        ClassroomInfo(id: "d2222222-2222-2222-2222-222222222222", name: "Laboratorio 2", description: "Laboratorio de Ciencias"),
+        ClassroomInfo(id: "a63e092c-1a03-40ee-861d-55bd9564c3c2", name: "Laboratorio Alfa", description: "Sala de Computación B")
+    ]
+
+    // File transfer state
+    @Published public var activeTransfer: FileTransferSession?
+    @Published public var lastCollectedFile: (name: String, path: String, date: Date)?
+    public var onRemoteDirListed: (([RemoteFileItem]) -> Void)?
+
+    // Messaging state
+    @Published public var lastMessageAck: (deviceId: String, hostname: String, time: Date)?
+
+    // Broadcast engine
     public let broadcastEngine = TeacherBroadcastEngine()
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var pingTimer: Timer?
+    private var heartbeatCheckTimer: Timer?
     private var token: String?
     private let session = URLSession(configuration: .default)
 
-    public init() {}
+    public init() {
+        startHeartbeatChecker()
+    }
+
+    deinit {
+        heartbeatCheckTimer?.invalidate()
+        pingTimer?.invalidate()
+    }
 
     public func connect(host: String = "127.0.0.1", port: Int = 3000, jwtToken: String? = nil) {
         self.serverHost = host
@@ -159,38 +190,100 @@ public class MasterGatewayClient: ObservableObject {
 
         DispatchQueue.main.async {
             self.log("Evento recibido: \(eventName)")
-            if eventName == "DEVICE_LIST" || eventName == "CLASSROOM_SNAPSHOT" {
-                if array.count > 1, let payload = array[1] as? [[String: Any]] {
-                    self.updateDeviceList(payload)
+            let payload = array.count > 1 ? array[1] as? [String: Any] : nil
+
+            switch eventName {
+            case "DEVICE_LIST", "CLASSROOM_SNAPSHOT":
+                if array.count > 1, let listPayload = array[1] as? [[String: Any]] {
+                    self.updateDeviceList(listPayload)
                 }
-            } else if eventName == "DEVICE_STATUS_CHANGE" || eventName == "DEVICE_STATUS_CHANGED" {
-                if array.count > 1, let payload = array[1] as? [String: Any] {
-                    self.updateSingleDevice(payload)
+
+            case "DEVICE_STATUS_CHANGE", "DEVICE_STATUS_CHANGED":
+                if let p = payload {
+                    self.updateSingleDevice(p)
                 }
-            } else if eventName == "LOCK_STATUS_CHANGE" {
-                if array.count > 1, let payload = array[1] as? [String: Any],
-                   let deviceId = payload["deviceId"] as? String,
-                   let locked = payload["locked"] as? Bool {
+
+            case "LOCK_STATUS_CHANGE":
+                if let p = payload,
+                   let deviceId = p["deviceId"] as? String,
+                   let locked = p["locked"] as? Bool {
                     if let dev = self.devices.first(where: { $0.id == deviceId }) {
                         dev.isLocked = locked
                         dev.status = locked ? .locked : .online
+                        dev.lastHeartbeat = Date()
                     }
                 }
-            } else if eventName == "DEVICE_THUMBNAIL" {
-                if array.count > 1, let payload = array[1] as? [String: Any],
-                   let deviceId = payload["deviceId"] as? String,
-                   let b64 = payload["thumbnailBase64"] as? String,
+
+            case "DEVICE_THUMBNAIL":
+                if let p = payload,
+                   let deviceId = p["deviceId"] as? String,
+                   let b64 = p["thumbnailBase64"] as? String,
                    let data = Data(base64Encoded: b64),
                    let image = NSImage(data: data) {
                     if let dev = self.devices.first(where: { $0.id == deviceId }) {
                         dev.thumbnail = image
+                        dev.lastHeartbeat = Date()
+                        dev.status = dev.isLocked ? .locked : .online
                     }
                 }
-            } else if eventName == "TEACHER_BROADCAST_STARTED" {
-                if array.count > 1, let payload = array[1] as? [String: Any] {
-                    let targetCount = payload["targetCount"] as? Int ?? 0
-                    let producerId = payload["producerId"] as? String ?? ""
-                    let sdpAnswer = payload["sdpAnswer"] as? String
+
+            case "MESSAGE_ACK":
+                if let p = payload,
+                   let deviceId = p["deviceId"] as? String,
+                   let hostname = p["hostname"] as? String {
+                    self.lastMessageAck = (deviceId: deviceId, hostname: hostname, time: Date())
+                    self.log("[MENSAJE CONFIRMADO] El alumno en \(hostname) confirmó lectura del aviso.")
+                }
+
+            case "FILE_SEND_RESULT":
+                if let p = payload {
+                    let success = p["success"] as? Bool ?? false
+                    let transferId = p["transferId"] as? String ?? ""
+                    let err = p["error"] as? String
+                    if let active = self.activeTransfer, active.id == transferId {
+                        active.status = success ? .completed : .failed
+                        active.progress = success ? 1.0 : active.progress
+                        active.errorMessage = err
+                    }
+                    self.log("[ARCHIVO] Resultado de distribución: \(success ? "ÉXITO" : "FALLO: \(err ?? "desconocido")")")
+                }
+
+            case "FILE_COLLECT_RESULT":
+                if let p = payload {
+                    let success = p["success"] as? Bool ?? false
+                    let fileName = p["fileName"] as? String ?? "trabajo_recolectado.dat"
+                    let b64 = p["fileContentBase64"] as? String ?? ""
+                    let sha = p["sha256"] as? String ?? ""
+                    let err = p["error"] as? String
+
+                    if success, let data = Data(base64Encoded: b64) {
+                        self.saveCollectedFileData(data: data, fileName: fileName, sha256: sha)
+                    } else {
+                        self.log("[ARCHIVO ERROR] No se pudo recolectar archivo: \(err ?? "error desconocido")")
+                    }
+                }
+
+            case "FILE_LIST_DIR_RESULT":
+                if let p = payload, let rawItems = p["items"] as? [[String: Any]] {
+                    var items: [RemoteFileItem] = []
+                    for raw in rawItems {
+                        let name = raw["name"] as? String ?? "archivo"
+                        let path = raw["path"] as? String ?? ""
+                        let size = raw["size"] as? Int ?? 0
+                        let isDir = raw["isDirectory"] as? Bool ?? false
+                        let ext = raw["extension"] as? String ?? ""
+                        let modifiedEpoch = raw["modifiedAt"] as? Double ?? 0
+                        let modDate = modifiedEpoch > 0 ? Date(timeIntervalSince1970: modifiedEpoch / 1000.0) : Date()
+                        items.append(RemoteFileItem(name: name, path: path, size: size, isDirectory: isDir, modifiedAt: modDate, fileExtension: ext))
+                    }
+                    self.onRemoteDirListed?(items)
+                }
+
+            case "TEACHER_BROADCAST_STARTED":
+                if let p = payload {
+                    let targetCount = p["targetCount"] as? Int ?? 0
+                    let producerId = p["producerId"] as? String ?? ""
+                    let sdpAnswer = p["sdpAnswer"] as? String
                     self.log("[SFU BROADCAST] ✅ Transmisión docente iniciada hacia \(targetCount) estudiantes (Producer ID: \(producerId))")
                     if let answer = sdpAnswer, !answer.isEmpty {
                         Task {
@@ -207,10 +300,14 @@ public class MasterGatewayClient: ObservableObject {
                         }
                     }
                 }
-            } else if eventName == "TEACHER_BROADCAST_STOPPED" {
+
+            case "TEACHER_BROADCAST_STOPPED":
                 self.isBroadcastingScreen = false
                 self.broadcastEngine.stop()
                 self.log("[SFU BROADCAST] 🛑 Transmisión docente finalizada.")
+
+            default:
+                break
             }
         }
     }
@@ -225,10 +322,24 @@ public class MasterGatewayClient: ObservableObject {
             let isLocked = (item["status"] as? String == "locked") || (item["isLocked"] as? Bool ?? false)
             let status: MasterDeviceStatus = isLocked ? .locked : .online
 
-            let dev = StudentDevice(id: id, hostname: hostname, osType: os, localIp: ip, status: status)
-            dev.isLocked = isLocked
-            dev.currentStudentName = item["currentStudentName"] as? String
-            updated.append(dev)
+            if let existing = self.devices.first(where: { $0.id == id }) {
+                existing.hostname = hostname
+                existing.osType = os
+                existing.localIp = ip
+                existing.status = status
+                existing.isLocked = isLocked
+                existing.currentStudentName = item["currentStudentName"] as? String ?? existing.currentStudentName
+                existing.classroomName = activeClassroom.name
+                existing.lastHeartbeat = Date()
+                updated.append(existing)
+            } else {
+                let dev = StudentDevice(id: id, hostname: hostname, osType: os, localIp: ip, status: status)
+                dev.isLocked = isLocked
+                dev.currentStudentName = item["currentStudentName"] as? String
+                dev.classroomName = activeClassroom.name
+                dev.lastHeartbeat = Date()
+                updated.append(dev)
+            }
         }
         self.devices = updated
     }
@@ -242,15 +353,38 @@ public class MasterGatewayClient: ObservableObject {
                 existing.status = status
                 existing.isLocked = (status == .locked)
             }
+            existing.lastHeartbeat = Date()
         } else {
             let hostname = payload["hostname"] as? String ?? "Host-\(id.prefix(4))"
             let dev = StudentDevice(id: id, hostname: hostname)
+            dev.classroomName = activeClassroom.name
+            dev.lastHeartbeat = Date()
             devices.append(dev)
         }
     }
 
+    private func startHeartbeatChecker() {
+        heartbeatCheckTimer?.invalidate()
+        heartbeatCheckTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            DispatchQueue.main.async {
+                self?.objectWillChange.send()
+            }
+        }
+    }
+
+    // ==========================================
+    // CLASSROOM SELECTION
+    // ==========================================
+
+    public func switchClassroom(to classroom: ClassroomInfo) {
+        log("[AULA] Cambiando a \(classroom.name) (\(classroom.id))...")
+        self.activeClassroom = classroom
+        self.devices.removeAll()
+        joinClassroom()
+    }
+
     private func joinClassroom() {
-        var payload: [String: Any] = ["classroomId": "d1111111-1111-1111-1111-111111111111"]
+        var payload: [String: Any] = ["classroomId": activeClassroom.id]
         if let t = token {
             payload["token"] = t
         }
@@ -259,12 +393,42 @@ public class MasterGatewayClient: ObservableObject {
     }
 
     // ==========================================
-    // VEYON MODULE ACTIONS (DISPATCH COMMANDS)
+    // MULTI-SELECTION & BULK ACTIONS
     // ==========================================
+
+    public var selectedDevices: [StudentDevice] {
+        devices.filter { $0.isSelected }
+    }
+
+    public func selectAll() {
+        for dev in devices { dev.isSelected = true }
+        objectWillChange.send()
+    }
+
+    public func deselectAll() {
+        for dev in devices { dev.isSelected = false }
+        objectWillChange.send()
+    }
+
+    public func lockSelected(message: String = "Pausa pedagógica activa para los equipos seleccionados.") {
+        let targets = selectedDevices.isEmpty ? devices : selectedDevices
+        log("[COMANDO] Bloqueando \(targets.count) equipo(s)")
+        for dev in targets {
+            lockDevice(id: dev.id, message: message)
+        }
+    }
+
+    public func unlockSelected() {
+        let targets = selectedDevices.isEmpty ? devices : selectedDevices
+        log("[COMANDO] Desbloqueando \(targets.count) equipo(s)")
+        for dev in targets {
+            unlockDevice(id: dev.id)
+        }
+    }
 
     public func lockAll(message: String = "Atención al frente. Pausa pedagógica activa.") {
         log("[COMANDO] Bloquear toda el aula")
-        emitEvent(["TEACHER_LOCK_CLASSROOM", ["message": message]])
+        emitEvent(["TEACHER_LOCK_CLASSROOM", ["message": message, "classroomId": activeClassroom.id]])
         for dev in devices {
             dev.isLocked = true
             dev.status = .locked
@@ -273,7 +437,7 @@ public class MasterGatewayClient: ObservableObject {
 
     public func unlockAll() {
         log("[COMANDO] Desbloquear toda el aula")
-        emitEvent(["TEACHER_UNLOCK_CLASSROOM", [:]])
+        emitEvent(["TEACHER_UNLOCK_CLASSROOM", ["classroomId": activeClassroom.id]])
         for dev in devices {
             dev.isLocked = false
             dev.status = .online
@@ -298,12 +462,17 @@ public class MasterGatewayClient: ObservableObject {
         }
     }
 
+    // ==========================================
+    // POPUP TEXT MESSAGING
+    // ==========================================
+
     public func sendPopupMessage(title: String, message: String, targetDeviceId: String? = nil, priority: String = "normal") {
-        log("[MENSAJE] Enviando '\(title)' a \(targetDeviceId ?? "todos")")
+        log("[MENSAJE] Enviando '\(title)' a \(targetDeviceId ?? "toda el aula")")
         var payload: [String: Any] = [
             "title": title,
             "message": message,
-            "priority": priority
+            "priority": priority,
+            "classroomId": activeClassroom.id
         ]
         if let target = targetDeviceId {
             payload["targetDeviceId"] = target
@@ -311,19 +480,101 @@ public class MasterGatewayClient: ObservableObject {
         emitEvent(["TEACHER_SEND_POPUP_MESSAGE", payload])
     }
 
+    // ==========================================
+    // FILE TRANSFER & WORK COLLECTION
+    // ==========================================
+
+    public func sendFile(fileUrl: URL, toDeviceId: String? = nil, isBroadcast: Bool = false) {
+        do {
+            let fileData = try Data(contentsOf: fileUrl)
+            let fileName = fileUrl.lastPathComponent
+            let hash = SHA256.hash(data: fileData).map { String(format: "%02x", $0) }.joined()
+            let base64 = fileData.base64EncodedString()
+
+            let targetDesc = isBroadcast ? "Toda el aula (\(devices.count) alumnos)" : (devices.first(where: { $0.id == toDeviceId })?.hostname ?? "Equipo")
+            let session = FileTransferSession(fileName: fileName, totalBytes: fileData.count, targetSummary: targetDesc, isBroadcast: isBroadcast)
+            session.sha256 = hash
+            session.status = .transferring
+            self.activeTransfer = session
+
+            log("[ARCHIVO] Enviando \(fileName) (\(fileData.count) bytes, SHA-256: \(hash.prefix(8))...) a \(targetDesc)")
+
+            var payload: [String: Any] = [
+                "fileName": fileName,
+                "fileSizeBytes": fileData.count,
+                "fileContentBase64": base64,
+                "sha256": hash,
+                "classroomId": activeClassroom.id
+            ]
+
+            if isBroadcast {
+                payload["broadcastToAll"] = true
+            } else if let devId = toDeviceId {
+                payload["deviceId"] = devId
+            }
+
+            emitEvent(["TEACHER_SEND_FILE", payload])
+        } catch {
+            log("[ARCHIVO ERROR] No se pudo leer el archivo local: \(error.localizedDescription)")
+            activeTransfer?.status = .failed
+            activeTransfer?.errorMessage = error.localizedDescription
+        }
+    }
+
+    public func collectFile(deviceId: String, filePath: String) {
+        log("[ARCHIVO] Solicitando recolección de \(filePath) desde equipo \(deviceId)")
+        emitEvent(["TEACHER_COLLECT_FILE", [
+            "deviceId": deviceId,
+            "filePath": filePath
+        ]])
+    }
+
+    public func listRemoteDirectory(deviceId: String, dirPath: String? = nil, completion: @escaping ([RemoteFileItem]) -> Void) {
+        self.onRemoteDirListed = completion
+        var payload: [String: Any] = ["deviceId": deviceId]
+        if let p = dirPath { payload["dirPath"] = p }
+        emitEvent(["TEACHER_LIST_DIR", payload])
+    }
+
+    private func saveCollectedFileData(data: Data, fileName: String, sha256: String) {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+        let folder = downloads.appendingPathComponent("AssetSchool_Collected", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+
+        let safeName = "Trabajo_\(Date().formatted(date: .numeric, time: .standard).replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-"))_\(fileName)"
+        let target = folder.appendingPathComponent(safeName)
+
+        do {
+            try data.write(to: target, options: .atomic)
+            self.lastCollectedFile = (name: fileName, path: target.path, date: Date())
+            self.log("[ARCHIVO RECOLECTADO] Guardado exitosamente en: \(target.path) (\(data.count) bytes, SHA-256: \(sha256.prefix(8))...)")
+        } catch {
+            self.log("[ARCHIVO ERROR] Error al guardar archivo recolectado: \(error.localizedDescription)")
+        }
+    }
+
+    // ==========================================
+    // POWER MANAGEMENT
+    // ==========================================
+
     public func powerAction(operation: String, targetDeviceId: String? = nil, delaySeconds: Int = 5, reason: String = "Orden del profesor") {
         log("[ENERGÍA] Operación \(operation) en \(targetDeviceId ?? "todas las estaciones")")
         var payload: [String: Any] = [
             "operation": operation,
             "delaySeconds": delaySeconds,
             "reason": reason,
-            "force": true
+            "force": true,
+            "classroomId": activeClassroom.id
         ]
         if let target = targetDeviceId {
             payload["targetDeviceId"] = target
         }
         emitEvent(["TEACHER_POWER_ACTION", payload])
     }
+
+    // ==========================================
+    // SCREEN BROADCAST (MEDIASOUP SFU)
+    // ==========================================
 
     public func startTeacherBroadcast(mode: String = "fullscreen") {
         log("[BROADCAST] Inicializando captura y codificación H.264 WebRTC nativa (\(mode))...")
@@ -335,7 +586,8 @@ public class MasterGatewayClient: ObservableObject {
                     "mode": mode,
                     "fps": 30,
                     "bitrateKbps": 2500,
-                    "sdpOffer": sdpOffer
+                    "sdpOffer": sdpOffer,
+                    "classroomId": activeClassroom.id
                 ]
                 await MainActor.run {
                     self.emitEvent(["TEACHER_BROADCAST_START", payload])
@@ -353,10 +605,22 @@ public class MasterGatewayClient: ObservableObject {
         log("[BROADCAST] Deteniendo transmisión docente y liberando recursos...")
         isBroadcastingScreen = false
         broadcastEngine.stop()
-        emitEvent(["TEACHER_BROADCAST_STOP", [:]])
+        emitEvent(["TEACHER_BROADCAST_STOP", ["classroomId": activeClassroom.id]])
     }
 
-    public func sendRemoteInput(deviceId: String, type: String, x: Double? = nil, y: Double? = nil, button: String? = nil, keyCode: Int? = nil, keyText: String? = nil) {
+    // ==========================================
+    // REMOTE CONTROL INPUT INJECTION
+    // ==========================================
+
+    public func sendRemoteInput(
+        deviceId: String,
+        type: String,
+        x: Double? = nil,
+        y: Double? = nil,
+        button: String? = nil,
+        keyCode: Int? = nil,
+        keyText: String? = nil
+    ) {
         var inputDict: [String: Any] = ["type": type]
         if let x = x { inputDict["x"] = x }
         if let y = y { inputDict["y"] = y }

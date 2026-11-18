@@ -647,10 +647,11 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         let title = (p["title"] as? String) ?? "Aviso del Profesor"
         let message = (p["message"] as? String) ?? ""
         let sender = (p["teacherName"] as? String) ?? "Profesor"
+        let messageId = (p["messageId"] as? String) ?? UUID().uuidString
 
         print("[GATEWAY CLIENT] 📢 Mensaje emergente recibido de \(sender): \"\(message)\"")
 
-        DispatchQueue.main.async {
+        DispatchQueue.main.async { [weak self] in
             let alert = NSAlert()
             alert.messageText = "📢 \(title)"
             alert.informativeText = "\(message)\n\n— Enviado por: \(sender)"
@@ -658,6 +659,14 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
             alert.addButton(withTitle: "Entendido")
             alert.window.level = .floating
             alert.runModal()
+
+            guard let self = self, self.isConnected else { return }
+            self.sendEvent(name: "MESSAGE_ACK", payload: [
+                "messageId": messageId,
+                "deviceId": self.deviceId,
+                "hostname": self.hostname,
+                "timestamp": Int(Date().timeIntervalSince1970 * 1000)
+            ])
         }
     }
 
