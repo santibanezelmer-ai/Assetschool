@@ -1,26 +1,48 @@
 using System;
+using System.ComponentModel;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Input;
 using System.Windows.Media;
 using AssetSchool.Master.Services;
+using AssetSchool.Master.ViewModels;
+using AssetSchool.Master.Windows;
 
 namespace AssetSchool.Master;
 
 public partial class MainWindow : Window
 {
     private readonly GatewayClient _client = GatewayClient.Instance;
+    private readonly ClassroomViewModel _classroomVm = new();
+    private ICollectionView? _devicesView;
 
     public MainWindow()
     {
         InitializeComponent();
 
-        DevicesItemsControl.ItemsSource = _client.Devices;
+        DataContext = _classroomVm;
+
+        // Bind Classroom Picker
+        CmbClassroom.ItemsSource = _classroomVm.AvailableClassrooms;
+        CmbClassroom.SelectedIndex = 0;
+
+        // Bind Devices Collection View
+        _devicesView = CollectionViewSource.GetDefaultView(_client.Devices);
+        _devicesView.Filter = FilterDevice;
+
+        DevicesItemsControl.ItemsSource = _devicesView;
+        DevicesDataGrid.ItemsSource = _devicesView;
+
+        // Gateway connection callbacks
         _client.OnConnectionChanged += isConn =>
         {
             Dispatcher.Invoke(() =>
             {
-                StatusDot.Fill = new SolidColorBrush(isConn ? (Color)ColorConverter.ConvertFromString("#10B981") : (Color)ColorConverter.ConvertFromString("#EF4444"));
+                StatusDot.Fill = new SolidColorBrush(isConn
+                    ? (Color)ColorConverter.ConvertFromString("#10B981")
+                    : (Color)ColorConverter.ConvertFromString("#EF4444"));
                 StatusText.Text = isConn ? "Conectado (:3000)" : "Desconectado";
             });
         };
@@ -33,86 +55,195 @@ public partial class MainWindow : Window
             });
         };
 
+        _client.Devices.CollectionChanged += (s, e) =>
+        {
+            Dispatcher.Invoke(UpdateStatsCounter);
+        };
+
         Loaded += async (s, e) =>
         {
             await _client.ConnectAsync();
+            UpdateStatsCounter();
         };
+    }
+
+    private bool FilterDevice(object item)
+    {
+        if (item is not StudentDeviceViewModel dev) return false;
+        string query = TxtSearch?.Text?.Trim().ToLowerInvariant() ?? "";
+        if (string.IsNullOrEmpty(query)) return true;
+
+        return dev.Hostname.ToLowerInvariant().Contains(query) ||
+               dev.LocalIp.Contains(query) ||
+               (dev.CurrentStudentName != null && dev.CurrentStudentName.ToLowerInvariant().Contains(query));
+    }
+
+    private void OnSearchTextChanged(object sender, TextChangedEventArgs e)
+    {
+        _devicesView?.Refresh();
+        UpdateStatsCounter();
+    }
+
+    private void UpdateStatsCounter()
+    {
+        int total = _client.Devices.Count;
+        int online = _client.Devices.Count(d => d.Status == "online");
+        int locked = _client.Devices.Count(d => d.IsLocked);
+
+        TxtStatsCounter.Text = $"Total: {total} • En línea: {online} • Bloqueados: {locked}";
+    }
+
+    private void OnViewModeChanged(object sender, RoutedEventArgs e)
+    {
+        if (GridScrollViewer == null || DevicesDataGrid == null) return;
+
+        bool isGrid = RbGridView.IsChecked == true;
+        GridScrollViewer.Visibility = isGrid ? Visibility.Visible : Visibility.Collapsed;
+        DevicesDataGrid.Visibility = isGrid ? Visibility.Collapsed : Visibility.Visible;
+    }
+
+    private async void OnClassroomSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (CmbClassroom.SelectedItem is ClassroomInfo selected)
+        {
+            _classroomVm.CurrentClassroomId = selected.Id;
+            _classroomVm.CurrentClassroomName = selected.Name;
+            await _client.JoinClassroomAsync(selected.Id);
+        }
     }
 
     private async void OnLockAllClicked(object sender, RoutedEventArgs e)
     {
         await _client.LockAllAsync();
+        UpdateStatsCounter();
     }
 
     private async void OnUnlockAllClicked(object sender, RoutedEventArgs e)
     {
         await _client.UnlockAllAsync();
+        UpdateStatsCounter();
     }
 
     private async void OnBroadcastClicked(object sender, RoutedEventArgs e)
     {
         if (_client.IsBroadcasting)
         {
-            await _client.StopBroadcastAsync();
+            await StopBroadcastAsync();
         }
         else
         {
-            await _client.StartBroadcastAsync();
+            await StartBroadcastAsync();
         }
     }
 
-    private async void OnMessageClicked(object sender, RoutedEventArgs e)
+    private async Task StartBroadcastAsync()
     {
-        var input = ShowInputDialog("Escriba el mensaje para toda el aula:", "Mensaje a Estudiantes", "Por favor presten atención al frente.");
-        if (!string.IsNullOrWhiteSpace(input))
-        {
-            await _client.SendPopupMessageAsync("Aviso del Profesor", input);
-        }
+        await _client.StartBroadcastAsync("fullscreen");
+        BroadcastBanner.Visibility = Visibility.Visible;
+        TxtBroadcastBtn.Text = "Detener Emisión";
+        BtnBroadcast.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#DC2626"));
     }
 
-    private static string? ShowInputDialog(string prompt, string title, string defaultValue = "")
+    private async Task StopBroadcastAsync()
     {
-        var dialog = new Window
-        {
-            Title = title,
-            Width = 420,
-            Height = 180,
-            WindowStartupLocation = WindowStartupLocation.CenterScreen,
-            ResizeMode = ResizeMode.NoResize,
-            Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#0F172A")!,
-            WindowStyle = WindowStyle.ToolWindow
-        };
+        await _client.StopBroadcastAsync();
+        BroadcastBanner.Visibility = Visibility.Collapsed;
+        TxtBroadcastBtn.Text = "Transmitir Pantalla";
+        BtnBroadcast.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#7C3AED"));
+    }
 
-        var stack = new StackPanel { Margin = new Thickness(16) };
-        stack.Children.Add(new TextBlock { Text = prompt, Foreground = Brushes.White, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 0, 0, 8) });
+    private async void OnStopBroadcastClicked(object sender, RoutedEventArgs e)
+    {
+        await StopBroadcastAsync();
+    }
 
-        var textBox = new TextBox { Text = defaultValue, Height = 28, Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#1E293B")!, Foreground = Brushes.White, BorderThickness = new Thickness(1), BorderBrush = (SolidColorBrush)new BrushConverter().ConvertFrom("#334155")!, Margin = new Thickness(0, 0, 0, 14) };
-        stack.Children.Add(textBox);
+    private void OnMessageClicked(object sender, RoutedEventArgs e)
+    {
+        var msgWin = new MessageWindow();
+        msgWin.Owner = this;
+        msgWin.ShowDialog();
+    }
 
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal, HorizontalAlignment = HorizontalAlignment.Right };
-        var okBtn = new Button { Content = "Enviar", Width = 80, Height = 28, Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#0284C7")!, Foreground = Brushes.White, IsDefault = true, Margin = new Thickness(0, 0, 8, 0) };
-        var cancelBtn = new Button { Content = "Cancelar", Width = 80, Height = 28, Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#334155")!, Foreground = Brushes.White, IsCancel = true };
-
-        string? result = null;
-        okBtn.Click += (s, e) => { result = textBox.Text; dialog.Close(); };
-        cancelBtn.Click += (s, e) => { dialog.Close(); };
-
-        buttons.Children.Add(okBtn);
-        buttons.Children.Add(cancelBtn);
-        stack.Children.Add(buttons);
-
-        dialog.Content = stack;
-        dialog.ShowDialog();
-        return result;
+    private void OnFileTransferClicked(object sender, RoutedEventArgs e)
+    {
+        var fileWin = new FileTransferWindow();
+        fileWin.Owner = this;
+        fileWin.ShowDialog();
     }
 
     private async void OnPowerClicked(object sender, RoutedEventArgs e)
     {
-        var res = MessageBox.Show("¿Desea reiniciar todas las computadoras del aula?", "Administración de Energía", MessageBoxButton.YesNoCancel, MessageBoxImage.Warning);
-        if (res == MessageBoxResult.Yes)
+        var dialog = new Window
         {
+            Title = "Administración de Energía — Aula Completa",
+            Width = 380,
+            Height = 220,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#0F172A")!,
+            WindowStyle = WindowStyle.ToolWindow,
+            ResizeMode = ResizeMode.NoResize
+        };
+
+        var stack = new StackPanel { Margin = new Thickness(16) };
+        stack.Children.Add(new TextBlock
+        {
+            Text = "Seleccione la acción de energía para las computadoras del aula:",
+            Foreground = Brushes.White,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14)
+        });
+
+        var btnReboot = new Button
+        {
+            Content = "🔄 Reiniciar Todos los Equipos",
+            Height = 32,
+            Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#D97706")!,
+            Foreground = Brushes.White,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        btnReboot.Click += async (s, ev) =>
+        {
+            dialog.Close();
             await _client.PowerActionAsync("reboot", delaySeconds: 5);
-        }
+        };
+        stack.Children.Add(btnReboot);
+
+        var btnShutdown = new Button
+        {
+            Content = "⚡ Apagar Todos los Equipos",
+            Height = 32,
+            Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#DC2626")!,
+            Foreground = Brushes.White,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 8)
+        };
+        btnShutdown.Click += async (s, ev) =>
+        {
+            dialog.Close();
+            await _client.PowerActionAsync("shutdown", delaySeconds: 5);
+        };
+        stack.Children.Add(btnShutdown);
+
+        var btnLogout = new Button
+        {
+            Content = "🚪 Cerrar Sesión de Estudiantes",
+            Height = 32,
+            Background = (SolidColorBrush)new BrushConverter().ConvertFrom("#334155")!,
+            Foreground = Brushes.White,
+            FontWeight = FontWeights.SemiBold
+        };
+        btnLogout.Click += async (s, ev) =>
+        {
+            dialog.Close();
+            await _client.PowerActionAsync("logout", delaySeconds: 0);
+        };
+        stack.Children.Add(btnLogout);
+
+        dialog.Content = stack;
+        dialog.ShowDialog();
     }
 
     private async void OnReconnectClicked(object sender, RoutedEventArgs e)
@@ -124,11 +255,34 @@ public partial class MainWindow : Window
     {
         if (sender is Button btn && btn.Tag is string devId)
         {
-            var dev = _client.Devices.FirstOrDefault(d => d.Id == devId);
-            if (dev != null)
-            {
-                MessageBox.Show($"Abriendo sesión de inspección y control remoto para {dev.Hostname} ({dev.LocalIp})...", "Control Remoto Veyon");
-            }
+            OpenDeviceInspection(devId);
+        }
+    }
+
+    private void OnDeviceThumbnailMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement fe && fe.Tag is string devId)
+        {
+            OpenDeviceInspection(devId);
+        }
+    }
+
+    private void OnDataGridRowDoubleClicked(object sender, MouseButtonEventArgs e)
+    {
+        if (DevicesDataGrid.SelectedItem is StudentDeviceViewModel dev)
+        {
+            OpenDeviceInspection(dev.Id);
+        }
+    }
+
+    private void OpenDeviceInspection(string deviceId)
+    {
+        var dev = _client.Devices.FirstOrDefault(d => d.Id == deviceId);
+        if (dev != null)
+        {
+            var inspectionWin = new DeviceInspectionWindow(dev);
+            inspectionWin.Owner = this;
+            inspectionWin.Show();
         }
     }
 
@@ -147,6 +301,7 @@ public partial class MainWindow : Window
                 {
                     await _client.LockDeviceAsync(devId);
                 }
+                UpdateStatsCounter();
             }
         }
     }

@@ -1,0 +1,96 @@
+<Window x:Class="AssetSchool.Master.Windows.DeviceInspectionWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Inspección y Control Remoto — AssetSchool" Height="700" Width="1100"
+        Background="#0F172A" WindowStartupLocation="CenterScreen">
+
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />     <!-- Interactive Screen Viewport -->
+            <ColumnDefinition Width="320" />   <!-- Telemetry and Action Controls -->
+        </Grid.ColumnDefinitions>
+
+        <!-- LEFT: INTERACTIVE VIEWPORT -->
+        <Border Grid.Column="0" Background="#020617" BorderBrush="#1E293B" BorderThickness="0,0,1,0">
+            <Grid>
+                <!-- Screen Canvas / Image -->
+                <Image x:Name="ViewportImage"
+                       Stretch="Uniform"
+                       Focusable="True"
+                       MouseMove="OnViewportMouseMove"
+                       MouseDown="OnViewportMouseDown"
+                       MouseUp="OnViewportMouseUp"
+                       MouseWheel="OnViewportMouseWheel"
+                       KeyDown="OnViewportKeyDown"
+                       KeyUp="OnViewportKeyUp" />
+
+                <!-- Remote Control Inactive Indicator -->
+                <Border x:Name="ControlOverlay" Background="#99000000" Visibility="Collapsed" IsHitTestVisible="False">
+                    <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                        <TextBlock Text="👁️ MODO OBSERVACIÓN PASIVA" Foreground="White" FontSize="16" FontWeight="Bold" HorizontalAlignment="Center" />
+                        <TextBlock Text="Active 'Control Remoto' en el panel lateral para interactuar." Foreground="#94A3B8" FontSize="12" Margin="0,4,0,0" HorizontalAlignment="Center" />
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <!-- RIGHT: SIDEBAR CONTROLS & TELEMETRY -->
+        <Border Grid.Column="1" Background="#0F172A" Padding="16">
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel>
+                    <!-- Device Info Header -->
+                    <TextBlock x:Name="TxtHostname" Text="PC-ESTUDIANTE" Foreground="White" FontSize="18" FontWeight="Bold" />
+                    <TextBlock x:Name="TxtIpAndOs" Text="192.168.1.100 • Windows 11 x64" Foreground="#38BDF8" FontSize="12" Margin="0,2,0,12" />
+
+                    <!-- Remote Control Toggle -->
+                    <Border Background="#1E293B" CornerRadius="8" Padding="12" Margin="0,0,0,16">
+                        <StackPanel>
+                            <DockPanel LastChildFill="False">
+                                <TextBlock Text="🎮 Control Interactivo" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <CheckBox x:Name="ChkRemoteControl" Checked="OnRemoteControlToggled" Unchecked="OnRemoteControlToggled" DockPanel.Dock="Right" VerticalAlignment="Center" />
+                            </DockPanel>
+                            <TextBlock Text="Envía mouse y teclado directamente a la sesión del estudiante." Foreground="#94A3B8" FontSize="11" TextWrapping="Wrap" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Telemetry Details -->
+                    <TextBlock Text="DETALLES TÉCNICOS" Foreground="#64748B" FontSize="11" FontWeight="Bold" Margin="0,0,0,8" />
+                    <Border Background="#1E293B" CornerRadius="8" Padding="12" Margin="0,0,0,16">
+                        <StackPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <TextBlock Text="Dirección MAC:" Foreground="#94A3B8" FontSize="11" />
+                                <TextBlock x:Name="TxtMac" Text="00:11:22:33:44:55" Foreground="White" FontSize="11" DockPanel.Dock="Right" />
+                            </DockPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <TextBlock Text="Estado:" Foreground="#94A3B8" FontSize="11" />
+                                <TextBlock x:Name="TxtStatus" Text="En línea" Foreground="#10B981" FontWeight="SemiBold" FontSize="11" DockPanel.Dock="Right" />
+                            </DockPanel>
+                            <DockPanel Margin="0,0,0,6">
+                                <TextBlock Text="Estudiante:" Foreground="#94A3B8" FontSize="11" />
+                                <TextBlock x:Name="TxtStudent" Text="No identificado" Foreground="White" FontSize="11" DockPanel.Dock="Right" />
+                            </DockPanel>
+                            <DockPanel>
+                                <TextBlock Text="Latencia / Liveness:" Foreground="#94A3B8" FontSize="11" />
+                                <TextBlock Text="< 50 ms (LAN)" Foreground="#38BDF8" FontSize="11" DockPanel.Dock="Right" />
+                            </DockPanel>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Pedagogical Actions -->
+                    <TextBlock Text="ACCIONES PEDAGÓGICAS" Foreground="#64748B" FontSize="11" FontWeight="Bold" Margin="0,0,0,8" />
+                    
+                    <Button Click="OnToggleLockClicked" x:Name="BtnLock" Content="🔒 Bloquear Pantalla" Background="#D97706" Foreground="White" Height="34" BorderThickness="0" Margin="0,0,0,8" FontWeight="SemiBold" />
+                    <Button Click="OnSendMessageClicked" Content="💬 Enviar Mensaje" Background="#4F46E5" Foreground="White" Height="34" BorderThickness="0" Margin="0,0,0,8" FontWeight="SemiBold" />
+                    <Button Click="OnFileTransferClicked" Content="📁 Enviar Archivos" Background="#0284C7" Foreground="White" Height="34" BorderThickness="0" Margin="0,0,0,8" FontWeight="SemiBold" />
+                    <Button Click="OnRebootClicked" Content="⚡ Reiniciar Equipo" Background="#DC2626" Foreground="White" Height="34" BorderThickness="0" Margin="0,0,0,8" FontWeight="SemiBold" />
+
+                    <!-- Status Log -->
+                    <TextBlock x:Name="TxtLog" Text="Sesión de inspección lista." Foreground="#94A3B8" FontSize="11" TextWrapping="Wrap" Margin="0,12,0,0" />
+                </StackPanel>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+</Window>

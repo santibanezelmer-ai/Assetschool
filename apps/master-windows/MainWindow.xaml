@@ -5,146 +5,215 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:vm="clr-namespace:AssetSchool.Master.ViewModels"
         mc:Ignorable="d"
-        Title="AssetSchool Master — Consola Docente de Aula" Height="720" Width="1080"
+        Title="AssetSchool Master — Consola Docente de Aula (.NET 8 WPF)" Height="780" Width="1180"
         Background="{StaticResource PrimaryBackground}"
         WindowStartupLocation="CenterScreen">
 
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto" /> <!-- Ribbon Toolbar -->
-            <RowDefinition Height="*" />    <!-- Student Grid -->
-            <RowDefinition Height="Auto" /> <!-- Status Bar -->
+            <RowDefinition Height="Auto" /> <!-- Main Ribbon Toolbar -->
+            <RowDefinition Height="Auto" /> <!-- Classroom & Search Filter Bar -->
+            <RowDefinition Height="Auto" /> <!-- Live Broadcast Active Banner -->
+            <RowDefinition Height="*" />    <!-- Student Devices View (Grid or Detailed List) -->
+            <RowDefinition Height="Auto" /> <!-- Bottom Status Bar -->
         </Grid.RowDefinitions>
 
-        <!-- TOP RIBBON TOOLBAR -->
+        <!-- 1. TOP RIBBON TOOLBAR -->
         <Border Grid.Row="0" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,0,0,1" Padding="12,8">
             <DockPanel LastChildFill="False">
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
-                    <!-- Monitor -->
-                    <Border Background="#1E3A8A" CornerRadius="6" Padding="8,4" Margin="0,0,8,0">
+                    <!-- View Mode Toggle -->
+                    <Border Background="#1E293B" CornerRadius="6" Padding="4" Margin="0,0,10,0">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="🖥️" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0" />
-                            <TextBlock Text="Monitor" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                            <RadioButton x:Name="RbGridView" Content="⊞ Cuadrícula" IsChecked="True" Checked="OnViewModeChanged" Foreground="White" Margin="4,2,8,2" />
+                            <RadioButton x:Name="RbListView" Content="☰ Tabla" Checked="OnViewModeChanged" Foreground="White" Margin="0,2,4,2" />
                         </StackPanel>
                     </Border>
 
                     <!-- Lock / Unlock -->
-                    <Button Click="OnLockAllClicked" Background="#D97706" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                    <Button Click="OnLockAllClicked" Background="#D97706" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0" Cursor="Hand">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="🔒" Margin="0,0,4,0" />
+                            <TextBlock Text="🔒" Margin="0,0,6,0" />
                             <TextBlock Text="Bloquear Aula" FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
 
-                    <Button Click="OnUnlockAllClicked" Background="#16A34A" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,12,0">
+                    <Button Click="OnUnlockAllClicked" Background="#16A34A" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,12,0" Cursor="Hand">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="🔓" Margin="0,0,4,0" />
+                            <TextBlock Text="🔓" Margin="0,0,6,0" />
                             <TextBlock Text="Desbloquear" FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
 
-                    <!-- Broadcast -->
-                    <Button Click="OnBroadcastClicked" Background="#7C3AED" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                    <!-- WebRTC Broadcast -->
+                    <Button Click="OnBroadcastClicked" x:Name="BtnBroadcast" Background="#7C3AED" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0" Cursor="Hand">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="📡" Margin="0,0,4,0" />
-                            <TextBlock Text="Transmitir Pantalla" FontWeight="SemiBold" />
+                            <TextBlock Text="📡" Margin="0,0,6,0" />
+                            <TextBlock x:Name="TxtBroadcastBtn" Text="Transmitir Pantalla" FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
 
-                    <!-- Message -->
-                    <Button Click="OnMessageClicked" Background="#4F46E5" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                    <!-- Message Popup -->
+                    <Button Click="OnMessageClicked" Background="#4F46E5" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0" Cursor="Hand">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="💬" Margin="0,0,4,0" />
+                            <TextBlock Text="💬" Margin="0,0,6,0" />
                             <TextBlock Text="Mensaje" FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
 
-                    <!-- Power -->
-                    <Button Click="OnPowerClicked" Background="#DC2626" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                    <!-- File Transfer & Work Collection -->
+                    <Button Click="OnFileTransferClicked" Background="#0284C7" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0" Cursor="Hand">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="⚡" Margin="0,0,4,0" />
+                            <TextBlock Text="📁" Margin="0,0,6,0" />
+                            <TextBlock Text="Archivos" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Power Menu -->
+                    <Button Click="OnPowerClicked" Background="#DC2626" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0" Cursor="Hand">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚡" Margin="0,0,6,0" />
                             <TextBlock Text="Energía" FontWeight="SemiBold" />
                         </StackPanel>
                     </Button>
                 </StackPanel>
 
-                <!-- Right Side: Connection Status -->
+                <!-- Right Side: Connection Status & Server Info -->
                 <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
                     <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#10B981" Margin="0,0,8,0" />
                     <TextBlock x:Name="StatusText" Text="Conectado (:3000)" Foreground="{StaticResource TextColor}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
-                    <Button Click="OnReconnectClicked" Content="🔄" Background="Transparent" Foreground="White" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" />
+                    <Button Click="OnReconnectClicked" Content="🔄 Reconectar" Background="#1E293B" Foreground="White" BorderBrush="{StaticResource BorderBrushColor}" Padding="8,4" FontSize="11" />
                 </StackPanel>
             </DockPanel>
         </Border>
 
-        <!-- STUDENT COMPUTERS GRID -->
-        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
-            <ItemsControl x:Name="DevicesItemsControl">
-                <ItemsControl.ItemsPanel>
-                    <ItemsPanelTemplate>
-                        <WrapPanel />
-                    </ItemsPanelTemplate>
-                </ItemsControl.ItemsPanel>
-                <ItemsControl.ItemTemplate>
-                    <DataTemplate>
-                        <Border Width="260" Height="210" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" Margin="8">
-                            <Grid>
-                                <Grid.RowDefinitions>
-                                    <RowDefinition Height="Auto" />
-                                    <RowDefinition Height="*" />
-                                    <RowDefinition Height="Auto" />
-                                </Grid.RowDefinitions>
+        <!-- 2. SUB-BAR: CLASSROOM & SEARCH -->
+        <Border Grid.Row="1" Background="#0F172A" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,0,0,1" Padding="14,8">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <TextBlock Text="Aula:" Foreground="#94A3B8" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <ComboBox x:Name="CmbClassroom" Width="220" Height="28" Background="#1E293B" Foreground="White" BorderBrush="#334155" SelectionChanged="OnClassroomSelectionChanged" />
 
-                                <!-- Card Header -->
-                                <Border Grid.Row="0" Background="#0F172A" Padding="8,6" CornerRadius="8,8,0,0">
-                                    <DockPanel>
-                                        <TextBlock Text="{Binding Hostname}" Foreground="White" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding OsType}" Foreground="#38BDF8" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="🔒" Foreground="#F59E0B" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}" DockPanel.Dock="Right" />
-                                    </DockPanel>
-                                </Border>
+                    <Border Width="1" Height="20" Background="#334155" Margin="14,0" />
 
-                                <!-- Thumbnail Screen Frame -->
-                                <Border Grid.Row="1" Background="Black">
-                                    <Grid>
-                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
-                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                            <TextBlock Text="🖥️" FontSize="36" HorizontalAlignment="Center" Foreground="#64748B" />
-                                            <TextBlock Text="{Binding LocalIp}" Foreground="#64748B" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
-                                        </StackPanel>
+                    <TextBlock Text="🔍" Foreground="#64748B" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox x:Name="TxtSearch" Width="200" Height="28" Background="#1E293B" Foreground="White" BorderBrush="#334155" VerticalContentAlignment="Center" Padding="6,0" TextChanged="OnSearchTextChanged" />
+                </StackPanel>
 
-                                        <!-- Lock Overlay if locked -->
-                                        <Border Background="#CC000000" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <TextBlock x:Name="TxtStatsCounter" Text="Total: 0 • En línea: 0 • Bloqueados: 0" Foreground="#94A3B8" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- 3. LIVE BROADCAST BANNER -->
+        <Border x:Name="BroadcastBanner" Grid.Row="2" Background="#991B1B" Padding="14,8" Visibility="Collapsed">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left" VerticalAlignment="Center">
+                    <TextBlock Text="🔴" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" />
+                    <TextBlock Text="TRANSMITIENDO PANTALLA EN VIVO A LOS ESTUDIANTES (WebRTC SFU)" Foreground="White" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+                </StackPanel>
+                <Button Click="OnStopBroadcastClicked" Content="Detener Transmisión" Background="#DC2626" Foreground="White" FontWeight="Bold" Padding="12,4" BorderThickness="0" DockPanel.Dock="Right" />
+            </DockPanel>
+        </Border>
+
+        <!-- 4. STUDENT COMPUTERS VIEWPORT -->
+        <Grid Grid.Row="3">
+            <!-- GRID VIEW -->
+            <ScrollViewer x:Name="GridScrollViewer" VerticalScrollBarVisibility="Auto" Padding="16" Visibility="Visible">
+                <ItemsControl x:Name="DevicesItemsControl">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <WrapPanel />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Width="270" Height="220" Background="{StaticResource SecondaryBackground}" BorderBrush="{Binding StatusColor}" BorderThickness="1.5" CornerRadius="8" Margin="8">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+
+                                    <!-- Card Header -->
+                                    <Border Grid.Row="0" Background="#0F172A" Padding="10,6" CornerRadius="7,7,0,0">
+                                        <DockPanel>
+                                            <Ellipse Width="8" Height="8" Fill="{Binding StatusColor}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding Hostname}" Foreground="White" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+                                            <TextBlock Text="{Binding OsType}" Foreground="#38BDF8" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                            <TextBlock Text="🔒" Foreground="#F59E0B" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}" DockPanel.Dock="Right" />
+                                        </DockPanel>
+                                    </Border>
+
+                                    <!-- Thumbnail Screen Frame -->
+                                    <Border Grid.Row="1" Background="Black" MouseLeftButtonDown="OnDeviceThumbnailMouseDown" Tag="{Binding Id}" Cursor="Hand">
+                                        <Grid>
+                                            <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
                                             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                                                <TextBlock Text="🔒" FontSize="28" HorizontalAlignment="Center" />
-                                                <TextBlock Text="BLOQUEADO" Foreground="#F59E0B" FontWeight="Bold" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                                <TextBlock Text="🖥️" FontSize="36" HorizontalAlignment="Center" Foreground="#475569" />
+                                                <TextBlock Text="{Binding LocalIp}" Foreground="#64748B" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
                                             </StackPanel>
-                                        </Border>
-                                    </Grid>
-                                </Border>
 
-                                <!-- Card Footer: Quick Actions -->
-                                <Border Grid.Row="2" Background="#0F172A" Padding="8,6" CornerRadius="0,0,8,8">
-                                    <DockPanel>
-                                        <TextBlock Text="{Binding LocalIp}" Foreground="#94A3B8" FontSize="10" VerticalAlignment="Center" />
-                                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
-                                            <Button Tag="{Binding Id}" Click="OnInspectDeviceClicked" Content="👁️ Ver" Background="#334155" Foreground="White" BorderThickness="0" Padding="8,2" Margin="0,0,4,0" FontSize="11" />
-                                            <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding LockButtonText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" FontSize="11" />
-                                        </StackPanel>
-                                    </DockPanel>
-                                </Border>
-                            </Grid>
-                        </Border>
-                    </DataTemplate>
-                </ItemsControl.ItemTemplate>
-            </ItemsControl>
-        </ScrollViewer>
+                                            <!-- Lock Overlay if locked -->
+                                            <Border Background="#CC000000" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}">
+                                                <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                    <TextBlock Text="🔒" FontSize="28" HorizontalAlignment="Center" />
+                                                    <TextBlock Text="BLOQUEADO" Foreground="#F59E0B" FontWeight="Bold" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                                </StackPanel>
+                                            </Border>
+                                        </Grid>
+                                    </Border>
 
-        <!-- BOTTOM STATUS BAR -->
-        <Border Grid.Row="2" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,1,0,0" Padding="12,4">
+                                    <!-- Card Footer: Quick Actions -->
+                                    <Border Grid.Row="2" Background="#0F172A" Padding="8,6" CornerRadius="0,0,7,7">
+                                        <DockPanel>
+                                            <StackPanel VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding LocalIp}" Foreground="#94A3B8" FontSize="10" />
+                                                <TextBlock Text="{Binding StatusDisplay}" Foreground="{Binding StatusColor}" FontSize="9" FontWeight="SemiBold" />
+                                            </StackPanel>
+                                            <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                                <Button Tag="{Binding Id}" Click="OnInspectDeviceClicked" Content="👁️ Control" Background="#334155" Foreground="White" BorderThickness="0" Padding="8,3" Margin="0,0,4,0" FontSize="11" Cursor="Hand" />
+                                                <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding LockButtonText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,3" FontSize="11" Cursor="Hand" />
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </Border>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </ScrollViewer>
+
+            <!-- DETAILED TABLE VIEW -->
+            <DataGrid x:Name="DevicesDataGrid" Visibility="Collapsed" AutoGenerateColumns="False" CanUserAddRows="False" Background="#0F172A" Foreground="White" BorderThickness="0" GridLinesVisibility="Horizontal" HorizontalGridLinesBrush="#1E293B" RowBackground="#0F172A" AlternatingRowBackground="#1E293B" MouseDoubleClick="OnDataGridRowDoubleClicked">
+                <DataGrid.Columns>
+                    <DataGridTextColumn Header="Equipo" Binding="{Binding Hostname}" Width="160" />
+                    <DataGridTextColumn Header="IP Local" Binding="{Binding LocalIp}" Width="140" />
+                    <DataGridTextColumn Header="Dirección MAC" Binding="{Binding MacAddress}" Width="160" />
+                    <DataGridTextColumn Header="Sistema" Binding="{Binding OsType}" Width="110" />
+                    <DataGridTextColumn Header="Estado" Binding="{Binding StatusDisplay}" Width="120" />
+                    <DataGridTextColumn Header="Bloqueado" Binding="{Binding IsLocked}" Width="90" />
+                    <DataGridTemplateColumn Header="Acciones" Width="*">
+                        <DataGridTemplateColumn.CellTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal">
+                                    <Button Tag="{Binding Id}" Click="OnInspectDeviceClicked" Content="👁️ Control Remoto" Background="#0284C7" Foreground="White" BorderThickness="0" Padding="8,2" Margin="0,0,6,0" FontSize="11" />
+                                    <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding LockButtonText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="#334155" Padding="6,2" FontSize="11" />
+                                </StackPanel>
+                            </DataTemplate>
+                        </DataGridTemplateColumn.CellTemplate>
+                    </DataGridTemplateColumn>
+                </DataGrid.Columns>
+            </DataGrid>
+        </Grid>
+
+        <!-- 5. BOTTOM STATUS BAR -->
+        <Border Grid.Row="4" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,1,0,0" Padding="12,4">
             <DockPanel>
                 <TextBlock x:Name="FooterLogText" Text="AssetSchool Master listo para supervisión de aula." Foreground="{StaticResource SecondaryText}" FontSize="11" />
-                <TextBlock Text="Paridad Veyon Suite • Protocolo v1.0 • Cero Nube" Foreground="{StaticResource SecondaryText}" FontSize="11" DockPanel.Dock="Right" />
+                <TextBlock Text="Paridad Veyon Suite • Windows .NET 8 • Mediasoup WebRTC • Cero Nube" Foreground="{StaticResource SecondaryText}" FontSize="11" DockPanel.Dock="Right" />
             </DockPanel>
         </Border>
     </Grid>

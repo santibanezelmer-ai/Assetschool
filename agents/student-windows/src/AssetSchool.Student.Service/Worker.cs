@@ -1,6 +1,8 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
+using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Text;
@@ -32,13 +34,25 @@ public class Worker : BackgroundService
         _logger.LogInformation("=========================================================");
         _logger.LogInformation("  AssetSchool Student Service (Windows Service .NET 8)");
         _logger.LogInformation($"  Equipo: {Environment.MachineName} (Sesión 0)");
+        _logger.LogInformation($"  MAC: {GetActiveMacAddress()} | IP: {GetLocalIpAddress()}");
         _logger.LogInformation("=========================================================");
 
         // Start Named Pipe IPC Server for active console session (Session 1)
         _ipcServer = new NamedPipeIpcServer(1);
-        _ipcServer.OnMessageReceived += (msg) =>
+        _ipcServer.OnMessageReceived += async (msg) =>
         {
-            _logger.LogInformation($"[IPC del SessionAgent]: {msg}");
+            // Forward messages from SessionAgent up to central local-server
+            try
+            {
+                if (_webSocket != null && _webSocket.State == WebSocketState.Open)
+                {
+                    await SendRawAsync($"42{msg}");
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"Error enviando mensaje de SessionAgent al servidor: {ex.Message}");
+            }
         };
         _ipcServer.Start();
 
@@ -116,6 +130,8 @@ public class Worker : BackgroundService
         _isConnected = true;
         _logger.LogInformation("Conexión WebSocket establecida con éxito.");
 
+        _ = Task.Run(() => HeartbeatLoop(token), token);
+
         var buffer = new byte[65536];
         while (!token.IsCancellationRequested && _webSocket.State == WebSocketState.Open)
         {
@@ -124,6 +140,29 @@ public class Worker : BackgroundService
 
             var message = Encoding.UTF8.GetString(buffer, 0, res.Count);
             await HandleGatewayMessage(message);
+        }
+    }
+
+    private async Task HeartbeatLoop(CancellationToken token)
+    {
+        while (!token.IsCancellationRequested && _webSocket?.State == WebSocketState.Open)
+        {
+            await Task.Delay(15000, token);
+            try
+            {
+                var pingEnvelope = new
+                {
+                    protocolVersion = "1.0.0",
+                    packetType = "HEARTBEAT_PING",
+                    source = "AGENT",
+                    sourceId = _deviceId,
+                    timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    payload = new { timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }
+                };
+                var json = JsonSerializer.Serialize(new object[] { "HEARTBEAT_PING", pingEnvelope });
+                await SendRawAsync($"42{json}");
+            }
+            catch { }
         }
     }
 
@@ -139,20 +178,31 @@ public class Worker : BackgroundService
         {
             await SendRawAsync("40");
 
-            // Send AGENT_HELLO
+            // Send AGENT_HELLO with full R0 protocol envelope
             var helloPayload = new
             {
                 hostname = Environment.MachineName,
-                macAddress = "00:00:00:00:00:00",
-                localIp = "127.0.0.1",
+                macAddress = GetActiveMacAddress(),
+                localIp = GetLocalIpAddress(),
                 osType = "windows",
                 osVersion = Environment.OSVersion.ToString(),
                 architecture = Environment.Is64BitOperatingSystem ? "x64" : "x86",
                 agentVersion = "1.0.0",
-                publicKey = "ed25519_local_key"
+                publicKey = "ed25519_win_key",
+                enrolledDeviceId = _deviceId
             };
 
-            var eventPacket = new object[] { "AGENT_HELLO", helloPayload };
+            var envelope = new
+            {
+                packetId = Guid.NewGuid().ToString(),
+                packetType = "AGENT_HELLO",
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                senderId = _deviceId,
+                target = "server",
+                payload = helloPayload
+            };
+
+            var eventPacket = new object[] { "AGENT_HELLO", envelope };
             var json = JsonSerializer.Serialize(eventPacket);
             await SendRawAsync($"42{json}");
             return;
@@ -178,11 +228,12 @@ public class Worker : BackgroundService
 
                 _logger.LogInformation($"[Evento del Servidor]: {eventName}");
 
-                if (eventName == "POWER_ACTION")
+                if (eventName == "POWER_ACTION" || eventName == "TEACHER_POWER_ACTION")
                 {
-                    string op = payload.TryGetProperty("operation", out var opProp) ? opProp.GetString() ?? "reboot" : "reboot";
-                    int delay = payload.TryGetProperty("delaySeconds", out var dProp) ? dProp.GetInt32() : 5;
-                    string reason = payload.TryGetProperty("reason", out var rProp) ? rProp.GetString() ?? "Orden del profesor" : "Orden del profesor";
+                    var p = payload.TryGetProperty("payload", out var pl) ? pl : payload;
+                    string op = p.TryGetProperty("operation", out var opProp) ? opProp.GetString() ?? "reboot" : "reboot";
+                    int delay = p.TryGetProperty("delaySeconds", out var dProp) ? dProp.GetInt32() : 5;
+                    string reason = p.TryGetProperty("reason", out var rProp) ? rProp.GetString() ?? "Orden del profesor" : "Orden del profesor";
 
                     PowerManager.ExecutePowerAction(op, delay, reason);
                 }
@@ -207,6 +258,41 @@ public class Worker : BackgroundService
         if (_webSocket?.State != WebSocketState.Open) return;
         var bytes = Encoding.UTF8.GetBytes(message);
         await _webSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+    }
+
+    private static string GetActiveMacAddress()
+    {
+        try
+        {
+            var nic = NetworkInterface.GetAllNetworkInterfaces()
+                .FirstOrDefault(nic => nic.OperationalStatus == OperationalStatus.Up &&
+                                       nic.NetworkInterfaceType != NetworkInterfaceType.Loopback &&
+                                       nic.GetPhysicalAddress().GetAddressBytes().Length == 6);
+            if (nic != null)
+            {
+                var bytes = nic.GetPhysicalAddress().GetAddressBytes();
+                return string.Join(":", bytes.Select(b => b.ToString("X2")));
+            }
+        }
+        catch { }
+        return "00:11:22:33:44:55";
+    }
+
+    private static string GetLocalIpAddress()
+    {
+        try
+        {
+            var host = Dns.GetHostEntry(Dns.GetHostName());
+            foreach (var ip in host.AddressList)
+            {
+                if (ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+                {
+                    return ip.ToString();
+                }
+            }
+        }
+        catch { }
+        return "127.0.0.1";
     }
 
     public override void Dispose()

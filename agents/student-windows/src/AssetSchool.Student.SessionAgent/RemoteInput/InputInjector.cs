@@ -51,7 +51,10 @@ public static class InputInjector
     private const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
     private const uint MOUSEEVENTF_LEFTUP = 0x0004;
     private const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
-    private const uint MOUSEEVENTF_RIGHTUP = 0x00010;
+    private const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    private const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    private const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
+    private const uint MOUSEEVENTF_WHEEL = 0x0800;
     private const uint MOUSEEVENTF_ABSOLUTE = 0x8000;
 
     private const uint KEYEVENTF_KEYDOWN = 0x0000;
@@ -83,8 +86,18 @@ public static class InputInjector
     {
         InjectMouseMove(normalizedX, normalizedY);
 
-        uint downFlag = button == "right" ? MOUSEEVENTF_RIGHTDOWN : MOUSEEVENTF_LEFTDOWN;
-        uint upFlag = button == "right" ? MOUSEEVENTF_RIGHTUP : MOUSEEVENTF_LEFTUP;
+        uint downFlag = button.ToLowerInvariant() switch
+        {
+            "right" => MOUSEEVENTF_RIGHTDOWN,
+            "middle" => MOUSEEVENTF_MIDDLEDOWN,
+            _ => MOUSEEVENTF_LEFTDOWN
+        };
+        uint upFlag = button.ToLowerInvariant() switch
+        {
+            "right" => MOUSEEVENTF_RIGHTUP,
+            "middle" => MOUSEEVENTF_MIDDLEUP,
+            _ => MOUSEEVENTF_LEFTUP
+        };
 
         var down = new INPUT
         {
@@ -97,6 +110,34 @@ public static class InputInjector
             type = INPUT_MOUSE,
             mkhi = new MOUSEKEYBDHARDWAREINPUT { mi = new MOUSEINPUT { dwFlags = upFlag } }
         };
+
+        SendInput(2, new[] { down, up }, Marshal.SizeOf(typeof(INPUT)));
+    }
+
+    public static void InjectMouseDoubleClick(double normalizedX, double normalizedY)
+    {
+        InjectMouseClick(normalizedX, normalizedY, "left");
+        Thread.Sleep(30);
+        InjectMouseClick(normalizedX, normalizedY, "left");
+    }
+
+    public static void InjectMouseScroll(int delta)
+    {
+        var input = new INPUT
+        {
+            type = INPUT_MOUSE,
+            mkhi = new MOUSEKEYBDHARDWAREINPUT
+            {
+                mi = new MOUSEINPUT
+                {
+                    mouseData = (uint)delta,
+                    dwFlags = MOUSEEVENTF_WHEEL
+                }
+            }
+        };
+
+        SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT)));
+    }
 
         SendInput(2, new[] { down, up }, Marshal.SizeOf(typeof(INPUT)));
     }

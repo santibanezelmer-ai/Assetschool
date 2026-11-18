@@ -1,0 +1,99 @@
+<Window x:Class="AssetSchool.Master.Windows.MessageWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        mc:Ignorable="d"
+        Title="Difusión de Mensajes con Confirmación — AssetSchool" Height="540" Width="800"
+        Background="#0F172A" WindowStartupLocation="CenterScreen">
+
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*" />     <!-- Left: Compose Message Form -->
+            <ColumnDefinition Width="12" />    <!-- Divider -->
+            <ColumnDefinition Width="300" />   <!-- Right: Live Student ACK Receipt List -->
+        </Grid.ColumnDefinitions>
+
+        <!-- LEFT: COMPOSE FORM -->
+        <Border Grid.Column="0" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="📢 NUEVO MENSAJE AL ESTUDIANTE" Foreground="White" FontSize="14" FontWeight="Bold" Margin="0,0,0,12" />
+
+                <!-- Scope / Target -->
+                <DockPanel Grid.Row="1" Margin="0,0,0,10">
+                    <TextBlock Text="Destinatario:" Foreground="#94A3B8" FontSize="11" Width="90" VerticalAlignment="Center" />
+                    <ComboBox x:Name="CmbTarget" Height="28" Background="#0F172A" Foreground="White" BorderBrush="#334155" />
+                </DockPanel>
+
+                <!-- Title & Priority -->
+                <Grid Grid.Row="2" Margin="0,0,0,10">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*" />
+                        <ColumnDefinition Width="8" />
+                        <ColumnDefinition Width="130" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="Título del Aviso:" Foreground="#94A3B8" FontSize="11" Margin="0,0,0,4" />
+                        <TextBox x:Name="TxtTitle" Text="Aviso del Docente" Height="28" Background="#0F172A" Foreground="White" BorderBrush="#334155" Padding="4,2" />
+                    </StackPanel>
+
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="Prioridad:" Foreground="#94A3B8" FontSize="11" Margin="0,0,0,4" />
+                        <ComboBox x:Name="CmbPriority" Height="28" Background="#0F172A" Foreground="White" BorderBrush="#334155">
+                            <ComboBoxItem Content="Normal" IsSelected="True" />
+                            <ComboBoxItem Content="Alta" />
+                            <ComboBoxItem Content="Urgente" />
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+
+                <!-- Body -->
+                <StackPanel Grid.Row="3" Margin="0,0,0,12">
+                    <TextBlock Text="Contenido del Mensaje:" Foreground="#94A3B8" FontSize="11" Margin="0,0,0,4" />
+                    <TextBox x:Name="TxtBody" Text="Por favor guarden silencio y presten atención al frente." AcceptsReturn="True" TextWrapping="Wrap" Height="140" Background="#0F172A" Foreground="White" BorderBrush="#334155" Padding="6" />
+                </StackPanel>
+
+                <!-- Actions -->
+                <DockPanel Grid.Row="4">
+                    <Button Click="OnSendMessageClicked" Content="🚀 Enviar Notificación" Background="#0284C7" Foreground="White" FontWeight="SemiBold" Height="34" BorderThickness="0" Padding="16,0" DockPanel.Dock="Left" />
+                    <Button Click="OnClearClicked" Content="Limpiar" Background="#334155" Foreground="White" Height="34" BorderThickness="0" Padding="12,0" DockPanel.Dock="Right" />
+                </DockPanel>
+            </Grid>
+        </Border>
+
+        <!-- RIGHT: LIVE ACK TRACKER -->
+        <Border Grid.Column="2" Background="#1E293B" BorderBrush="#334155" BorderThickness="1" CornerRadius="8" Padding="14">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <TextBlock Grid.Row="0" Text="📋 LECTURAS CONFIRMADAS" Foreground="White" FontSize="14" FontWeight="Bold" Margin="0,0,0,4" />
+                <TextBlock Grid.Row="1" Text="Estudiantes que pulsaron 'Entendido'" Foreground="#94A3B8" FontSize="11" Margin="0,0,0,10" />
+
+                <ListBox x:Name="LstAcks" Grid.Row="2" Background="#0F172A" BorderBrush="#334155" Foreground="White">
+                    <ListBox.ItemTemplate>
+                        <DataTemplate>
+                            <DockPanel Padding="4">
+                                <TextBlock Text="✅" Foreground="#10B981" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding Hostname}" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                <TextBlock Text="{Binding TimeDisplay}" Foreground="#94A3B8" FontSize="10" DockPanel.Dock="Right" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
