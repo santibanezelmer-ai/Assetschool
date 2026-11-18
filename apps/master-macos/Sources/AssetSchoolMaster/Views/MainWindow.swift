@@ -165,6 +165,35 @@ public struct MasterMainWindow: View {
             )
 
             // ==========================================
+            // LIVE TEACHER BROADCAST BANNER
+            // ==========================================
+            if client.isBroadcastingScreen {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(Color.red)
+                        .frame(width: 10, height: 10)
+                    Text("TRANSMITIENDO PANTALLA EN VIVO")
+                        .font(.caption)
+                        .fontWeight(.bold)
+                        .foregroundColor(.white)
+                    Text("— Distribuyendo señal H.264 (Mediasoup SFU) a \(client.devices.count) estudiantes")
+                        .font(.caption)
+                        .foregroundColor(.white.opacity(0.9))
+                    Spacer()
+                    Button("Detener Transmisión") {
+                        client.stopTeacherBroadcast()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.white)
+                    .foregroundColor(.red)
+                    .controlSize(.small)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+                .background(Color.red)
+            }
+
+            // ==========================================
             // MAIN WORKSPACE: CLASSROOM GRID
             // ==========================================
             if client.devices.isEmpty {

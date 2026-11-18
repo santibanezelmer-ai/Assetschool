@@ -12,6 +12,7 @@ public class MasterGatewayClient: ObservableObject {
     @Published public var statusMessage: String = "Desconectado"
     @Published public var isBroadcastingScreen: Bool = false
     @Published public var lastLog: String = ""
+    public let broadcastEngine = TeacherBroadcastEngine()
 
     private var webSocketTask: URLSessionWebSocketTask?
     private var pingTimer: Timer?
@@ -189,10 +190,26 @@ public class MasterGatewayClient: ObservableObject {
                 if array.count > 1, let payload = array[1] as? [String: Any] {
                     let targetCount = payload["targetCount"] as? Int ?? 0
                     let producerId = payload["producerId"] as? String ?? ""
+                    let sdpAnswer = payload["sdpAnswer"] as? String
                     self.log("[SFU BROADCAST] ✅ Transmisión docente iniciada hacia \(targetCount) estudiantes (Producer ID: \(producerId))")
+                    if let answer = sdpAnswer, !answer.isEmpty {
+                        Task {
+                            do {
+                                try await self.broadcastEngine.handleRemoteAnswer(sdpAnswer: answer)
+                                await MainActor.run {
+                                    self.log("[SFU BROADCAST] Enlace WebRTC con Mediasoup establecido. Emitiendo video H.264 real.")
+                                }
+                            } catch {
+                                await MainActor.run {
+                                    self.log("[SFU BROADCAST ERROR] Error al aplicar SDP Answer: \(error.localizedDescription)")
+                                }
+                            }
+                        }
+                    }
                 }
             } else if eventName == "TEACHER_BROADCAST_STOPPED" {
                 self.isBroadcastingScreen = false
+                self.broadcastEngine.stop()
                 self.log("[SFU BROADCAST] 🛑 Transmisión docente finalizada.")
             }
         }
@@ -308,37 +325,34 @@ public class MasterGatewayClient: ObservableObject {
         emitEvent(["TEACHER_POWER_ACTION", payload])
     }
 
-    public func startTeacherBroadcast(mode: String = "fullscreen", sdpOffer: String? = nil) {
-        log("[BROADCAST] Iniciando transmisión docente (\(mode)) con SFU Mediasoup...")
+    public func startTeacherBroadcast(mode: String = "fullscreen") {
+        log("[BROADCAST] Inicializando captura y codificación H.264 WebRTC nativa (\(mode))...")
         isBroadcastingScreen = true
-        var payload: [String: Any] = ["mode": mode, "fps": 30, "bitrateKbps": 2500]
-        if let sdp = sdpOffer {
-            payload["sdpOffer"] = sdp
-        } else {
-            payload["sdpOffer"] = """
-            v=0\r
-            o=- \(Int(Date().timeIntervalSince1970)) 2 IN IP4 127.0.0.1\r
-            s=AssetSchool-Teacher-Broadcast\r
-            t=0 0\r
-            m=video 9 UDP/TLS/RTP/SAVPF 96\r
-            c=IN IP4 127.0.0.1\r
-            a=rtcp:9 IN IP4 127.0.0.1\r
-            a=sendonly\r
-            a=rtpmap:96 H264/90000\r
-            a=fmtp:96 packetization-mode=1;profile-level-id=42e01f;level-asymmetry-allowed=1\r
-            a=rtcp-fb:96 nack\r
-            a=rtcp-fb:96 nack pli\r
-            a=rtcp-fb:96 ccm fir\r
-            a=ssrc:11223344 cname:assetschool-teacher-screen\r
-            a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF:00:11:22:33:44:55:66:77:88:99:AA:BB:CC:DD:EE:FF\r
-            """
+        Task {
+            do {
+                let sdpOffer = try await self.broadcastEngine.startBroadcast(fps: 30)
+                let payload: [String: Any] = [
+                    "mode": mode,
+                    "fps": 30,
+                    "bitrateKbps": 2500,
+                    "sdpOffer": sdpOffer
+                ]
+                await MainActor.run {
+                    self.emitEvent(["TEACHER_BROADCAST_START", payload])
+                }
+            } catch {
+                await MainActor.run {
+                    self.isBroadcastingScreen = false
+                    self.log("[BROADCAST ERROR] Fallo al iniciar emisión WebRTC: \(error.localizedDescription)")
+                }
+            }
         }
-        emitEvent(["TEACHER_BROADCAST_START", payload])
     }
 
     public func stopTeacherBroadcast() {
-        log("[BROADCAST] Deteniendo transmisión docente")
+        log("[BROADCAST] Deteniendo transmisión docente y liberando recursos...")
         isBroadcastingScreen = false
+        broadcastEngine.stop()
         emitEvent(["TEACHER_BROADCAST_STOP", [:]])
     }
 

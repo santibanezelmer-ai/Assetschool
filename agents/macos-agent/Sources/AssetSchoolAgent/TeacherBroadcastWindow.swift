@@ -8,6 +8,7 @@ public final class TeacherBroadcastManager {
 
     private var broadcastWindow: NSWindow?
     private var imageView: NSImageView?
+    private var placeholderLabel: NSTextField?
     public private(set) var isBroadcasting: Bool = false
 
     public init() {}
@@ -85,6 +86,7 @@ public final class TeacherBroadcastManager {
             placeholder.font = NSFont.systemFont(ofSize: 15, weight: .medium)
             placeholder.textColor = .lightGray
             placeholder.alignment = .center
+            self.placeholderLabel = placeholder
             container.addSubview(placeholder)
 
             window.contentView = container
@@ -99,6 +101,7 @@ public final class TeacherBroadcastManager {
 
     public func updateFrame(image: NSImage) {
         DispatchQueue.main.async { [weak self] in
+            self?.placeholderLabel?.isHidden = true
             self?.imageView?.image = image
         }
     }
