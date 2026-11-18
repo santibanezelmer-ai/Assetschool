@@ -50,8 +50,16 @@ public class StudentDeviceViewModel : INotifyPropertyChanged
     public bool IsLocked
     {
         get => _isLocked;
-        set => SetField(ref _isLocked, value);
+        set
+        {
+            if (SetField(ref _isLocked, value))
+            {
+                OnPropertyChanged(nameof(LockButtonText));
+            }
+        }
     }
+
+    public string LockButtonText => _isLocked ? "🔓 Desbloquear" : "🔒 Bloquear";
 
     public bool IsSelected
     {

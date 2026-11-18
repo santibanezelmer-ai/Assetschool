@@ -129,7 +129,7 @@
                                         <TextBlock Text="{Binding LocalIp}" Foreground="#94A3B8" FontSize="10" VerticalAlignment="Center" />
                                         <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
                                             <Button Tag="{Binding Id}" Click="OnInspectDeviceClicked" Content="👁️ Ver" Background="#334155" Foreground="White" BorderThickness="0" Padding="8,2" Margin="0,0,4,0" FontSize="11" />
-                                            <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding IsLocked, ConverterParameter=LockText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" FontSize="11" />
+                                            <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding LockButtonText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" FontSize="11" />
                                         </StackPanel>
                                     </DockPanel>
                                 </Border>

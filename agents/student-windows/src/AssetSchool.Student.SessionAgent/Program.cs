@@ -23,7 +23,10 @@ public static class Program
 
         Console.WriteLine($"[SessionAgent] Iniciado en sesión interactiva #{sessionId}");
 
-        var ipcClient = new NamedPipeIpcClient(sessionId);
+        SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
+        var uiContext = SynchronizationContext.Current;
+
+        var ipcClient = new NamedPipeIpcClient(sessionId, uiContext);
         ipcClient.Start();
 
         // Hidden background message loop

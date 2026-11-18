@@ -176,7 +176,11 @@ public class MasterGatewayClient: ObservableObject {
     }
 
     private func joinClassroom() {
-        let event = ["TEACHER_JOIN_CLASSROOM", ["classroomId": "lab-informatica-01"]] as [Any]
+        var payload: [String: Any] = ["classroomId": "01010101-0101-0101-0101-010101010101"]
+        if let t = token {
+            payload["token"] = t
+        }
+        let event = ["TEACHER_JOIN_CLASSROOM", payload] as [Any]
         emitEvent(event)
     }
 
