@@ -1,0 +1,151 @@
+<Window x:Class="AssetSchool.Master.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:vm="clr-namespace:AssetSchool.Master.ViewModels"
+        mc:Ignorable="d"
+        Title="AssetSchool Master — Consola Docente de Aula" Height="720" Width="1080"
+        Background="{StaticResource PrimaryBackground}"
+        WindowStartupLocation="CenterScreen">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" /> <!-- Ribbon Toolbar -->
+            <RowDefinition Height="*" />    <!-- Student Grid -->
+            <RowDefinition Height="Auto" /> <!-- Status Bar -->
+        </Grid.RowDefinitions>
+
+        <!-- TOP RIBBON TOOLBAR -->
+        <Border Grid.Row="0" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,0,0,1" Padding="12,8">
+            <DockPanel LastChildFill="False">
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Left">
+                    <!-- Monitor -->
+                    <Border Background="#1E3A8A" CornerRadius="6" Padding="8,4" Margin="0,0,8,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🖥️" FontSize="16" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBlock Text="Monitor" Foreground="White" FontWeight="SemiBold" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Border>
+
+                    <!-- Lock / Unlock -->
+                    <Button Click="OnLockAllClicked" Background="#D97706" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔒" Margin="0,0,4,0" />
+                            <TextBlock Text="Bloquear Aula" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+
+                    <Button Click="OnUnlockAllClicked" Background="#16A34A" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,12,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔓" Margin="0,0,4,0" />
+                            <TextBlock Text="Desbloquear" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Broadcast -->
+                    <Button Click="OnBroadcastClicked" Background="#7C3AED" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="📡" Margin="0,0,4,0" />
+                            <TextBlock Text="Transmitir Pantalla" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Message -->
+                    <Button Click="OnMessageClicked" Background="#4F46E5" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="💬" Margin="0,0,4,0" />
+                            <TextBlock Text="Mensaje" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+
+                    <!-- Power -->
+                    <Button Click="OnPowerClicked" Background="#DC2626" Foreground="White" BorderThickness="0" Padding="12,6" Margin="0,0,6,0">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="⚡" Margin="0,0,4,0" />
+                            <TextBlock Text="Energía" FontWeight="SemiBold" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+
+                <!-- Right Side: Connection Status -->
+                <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="#10B981" Margin="0,0,8,0" />
+                    <TextBlock x:Name="StatusText" Text="Conectado (:3000)" Foreground="{StaticResource TextColor}" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                    <Button Click="OnReconnectClicked" Content="🔄" Background="Transparent" Foreground="White" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <!-- STUDENT COMPUTERS GRID -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="16">
+            <ItemsControl x:Name="DevicesItemsControl">
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <WrapPanel />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <Border Width="260" Height="210" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="1" CornerRadius="8" Margin="8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+
+                                <!-- Card Header -->
+                                <Border Grid.Row="0" Background="#0F172A" Padding="8,6" CornerRadius="8,8,0,0">
+                                    <DockPanel>
+                                        <TextBlock Text="{Binding Hostname}" Foreground="White" FontWeight="Bold" FontSize="12" VerticalAlignment="Center" />
+                                        <TextBlock Text="{Binding OsType}" Foreground="#38BDF8" FontSize="10" Margin="6,0,0,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="🔒" Foreground="#F59E0B" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}" DockPanel.Dock="Right" />
+                                    </DockPanel>
+                                </Border>
+
+                                <!-- Thumbnail Screen Frame -->
+                                <Border Grid.Row="1" Background="Black">
+                                    <Grid>
+                                        <Image Source="{Binding Thumbnail}" Stretch="Uniform" />
+                                        <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                            <TextBlock Text="🖥️" FontSize="36" HorizontalAlignment="Center" Foreground="#64748B" />
+                                            <TextBlock Text="{Binding LocalIp}" Foreground="#64748B" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                        </StackPanel>
+
+                                        <!-- Lock Overlay if locked -->
+                                        <Border Background="#CC000000" Visibility="{Binding IsLocked, Converter={x:Static BooleanToVisibilityConverter.Default}}">
+                                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
+                                                <TextBlock Text="🔒" FontSize="28" HorizontalAlignment="Center" />
+                                                <TextBlock Text="BLOQUEADO" Foreground="#F59E0B" FontWeight="Bold" FontSize="11" HorizontalAlignment="Center" Margin="0,4,0,0" />
+                                            </StackPanel>
+                                        </Border>
+                                    </Grid>
+                                </Border>
+
+                                <!-- Card Footer: Quick Actions -->
+                                <Border Grid.Row="2" Background="#0F172A" Padding="8,6" CornerRadius="0,0,8,8">
+                                    <DockPanel>
+                                        <TextBlock Text="{Binding LocalIp}" Foreground="#94A3B8" FontSize="10" VerticalAlignment="Center" />
+                                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right">
+                                            <Button Tag="{Binding Id}" Click="OnInspectDeviceClicked" Content="👁️ Ver" Background="#334155" Foreground="White" BorderThickness="0" Padding="8,2" Margin="0,0,4,0" FontSize="11" />
+                                            <Button Tag="{Binding Id}" Click="OnToggleDeviceLockClicked" Content="{Binding IsLocked, ConverterParameter=LockText}" Background="#1E293B" Foreground="#F59E0B" BorderBrush="{StaticResource BorderBrushColor}" Padding="6,2" FontSize="11" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                </Border>
+                            </Grid>
+                        </Border>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </ScrollViewer>
+
+        <!-- BOTTOM STATUS BAR -->
+        <Border Grid.Row="2" Background="{StaticResource SecondaryBackground}" BorderBrush="{StaticResource BorderBrushColor}" BorderThickness="0,1,0,0" Padding="12,4">
+            <DockPanel>
+                <TextBlock x:Name="FooterLogText" Text="AssetSchool Master listo para supervisión de aula." Foreground="{StaticResource SecondaryText}" FontSize="11" />
+                <TextBlock Text="Paridad Veyon Suite • Protocolo v1.0 • Cero Nube" Foreground="{StaticResource SecondaryText}" FontSize="11" DockPanel.Dock="Right" />
+            </DockPanel>
+        </Border>
+    </Grid>
+</Window>

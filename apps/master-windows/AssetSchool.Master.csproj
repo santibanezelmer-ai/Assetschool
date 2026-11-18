@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>AssetSchool.Master</RootNamespace>
+    <AssemblyName>AssetSchool.Master</AssemblyName>
+    <ApplicationIcon></ApplicationIcon>
+    <StartupObject>AssetSchool.Master.App</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SIPSorcery" Version="8.0.12" />
+    <PackageReference Include="SIPSorceryMedia.Encoders" Version="0.0.11" />
+  </ItemGroup>
+
+</Project>

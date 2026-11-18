@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>AssetSchool.Student.SessionAgent</RootNamespace>
+    <AssemblyName>AssetSchool.Student.SessionAgent</AssemblyName>
+    <StartupObject>AssetSchool.Student.SessionAgent.Program</StartupObject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SIPSorcery" Version="8.0.12" />
+    <PackageReference Include="SIPSorceryMedia.Encoders" Version="0.0.11" />
+  </ItemGroup>
+
+</Project>

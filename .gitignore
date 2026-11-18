@@ -10,3 +10,4 @@ obj/
 coverage/
 .env.local
 infrastructure/postgres/data/
+/node_modules

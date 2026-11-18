@@ -75,6 +75,27 @@ export enum PacketType {
   REMOTE_CONTROL_START = 'REMOTE_CONTROL_START',
   REMOTE_CONTROL_STOP = 'REMOTE_CONTROL_STOP',
   REMOTE_INPUT_EVENT = 'REMOTE_INPUT_EVENT',
+
+  // Pedagogical Lock (Veyon Lock Mode)
+  LOCK_SCREEN = 'LOCK_SCREEN',
+  UNLOCK_SCREEN = 'UNLOCK_SCREEN',
+
+  // Teacher Screen Broadcast (Veyon Presentation Mode)
+  TEACHER_BROADCAST_START = 'TEACHER_BROADCAST_START',
+  TEACHER_BROADCAST_STOP = 'TEACHER_BROADCAST_STOP',
+
+  // Pop-up Messaging (Veyon Text Messaging)
+  POPUP_MESSAGE = 'POPUP_MESSAGE',
+  POPUP_MESSAGE_ACK = 'POPUP_MESSAGE_ACK',
+
+  // Power Management (Veyon Reboot / Shutdown / Logout / WoL)
+  POWER_ACTION = 'POWER_ACTION',
+  POWER_ACTION_RESULT = 'POWER_ACTION_RESULT',
+
+  // Cryptographic Device Enrollment & Trust Lifecycle
+  ENROLLMENT_REQUEST = 'ENROLLMENT_REQUEST',
+  ENROLLMENT_APPROVAL = 'ENROLLMENT_APPROVAL',
+  DEVICE_REVOKED = 'DEVICE_REVOKED',
 }
 
 export interface SecuritySignature {
@@ -414,6 +435,94 @@ export interface RemoteInputEventPayload {
     alt?: boolean;
     meta?: boolean;
   };
+}
+
+// Pedagogical Lock Screen Payloads
+export interface LockScreenPayload {
+  teacherId: string;
+  teacherName: string;
+  institutionName: string;
+  message?: string;
+  deviceId?: string; // If targeting specific device; omit/null for broadcast
+  allowEmergencyUnlock?: boolean;
+}
+
+export interface UnlockScreenPayload {
+  teacherId: string;
+  deviceId?: string;
+}
+
+// Teacher Screen Broadcast (Veyon Presentation) Payloads
+export interface TeacherBroadcastStartPayload {
+  teacherId: string;
+  teacherName: string;
+  sessionId: string;
+  mode: 'fullscreen' | 'windowed';
+  fps?: number;
+  bitrateKbps?: number;
+}
+
+export interface TeacherBroadcastStopPayload {
+  teacherId: string;
+  sessionId: string;
+}
+
+// Pop-up Text Messaging Payloads
+export interface PopupMessagePayload {
+  messageId: string;
+  teacherId: string;
+  teacherName: string;
+  title: string;
+  message: string;
+  priority: 'normal' | 'urgent' | 'announcement';
+  sentAt: number;
+  targetDeviceId?: string; // null = entire classroom
+}
+
+export interface PopupMessageAckPayload {
+  messageId: string;
+  deviceId: string;
+  readAt: number;
+}
+
+// Power Management Payloads
+export type PowerOperation = 'reboot' | 'shutdown' | 'logout' | 'wakeOnLan';
+
+export interface PowerActionPayload {
+  actionId: string;
+  teacherId: string;
+  operation: PowerOperation;
+  delaySeconds: number;
+  reason?: string;
+  force: boolean;
+  targetDeviceId?: string;
+}
+
+export interface PowerActionResultPayload {
+  actionId: string;
+  deviceId: string;
+  operation: PowerOperation;
+  success: boolean;
+  error?: string;
+}
+
+// Cryptographic Enrollment & Trust Lifecycle
+export interface EnrollmentRequestPayload {
+  deviceId: string;
+  hostname: string;
+  osType: DevicePlatform;
+  osVersion: string;
+  devicePublicKey: string; // Ed25519 public key hex
+  hardwareUuid: string;
+  requestTimestamp: number;
+}
+
+export interface EnrollmentApprovalPayload {
+  deviceId: string;
+  institutionId: string;
+  approvedByTeacherId: string;
+  deviceToken: string; // Signed JWT / auth bearer token
+  approvedAt: number;
 }
 
 export function createEnvelope<T>(

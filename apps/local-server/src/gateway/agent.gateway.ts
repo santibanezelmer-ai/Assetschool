@@ -1560,6 +1560,263 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
     this.emitToSocket(session.agentSocketId, PacketType.REMOTE_INPUT_EVENT, envelope);
   }
 
+  // -------------------------------------------------------------
+  // VEYON MODULE: TEACHER SCREEN BROADCAST (PRESENTATION MODE)
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_BROADCAST_START')
+  async handleTeacherBroadcastStart(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      sessionId?: string;
+      mode?: 'fullscreen' | 'windowed';
+      fps?: number;
+      bitrateKbps?: number;
+      sdpOffer?: string;
+    },
+  ) {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) {
+      client.emit('TEACHER_ERROR', { code: 'UNAUTHORIZED', message: 'Docente no autenticado' });
+      return;
+    }
+
+    const sessionId = body?.sessionId || randomUUID();
+    const mode = body?.mode || 'fullscreen';
+    this.logger.log(`[BROADCAST] Docente ${teacher.email} iniciando presentación de pantalla (${mode})`);
+
+    let targetCount = 0;
+    for (const [socketId, agent] of this.connectedAgents.entries()) {
+      if (agent.institutionId === teacher.institutionId && !agent.quarantined) {
+        const envelope = createEnvelope(PacketType.TEACHER_BROADCAST_START, 'SERVER', 'server', {
+          sessionId,
+          teacherId: teacher.userId,
+          teacherName: teacher.email,
+          mode,
+          fps: body?.fps || 30,
+          bitrateKbps: body?.bitrateKbps || 2500,
+          sdpOffer: body?.sdpOffer,
+        });
+        if (this.emitToSocket(socketId, PacketType.TEACHER_BROADCAST_START, envelope)) {
+          targetCount++;
+        }
+      }
+    }
+
+    void this.writeAudit({
+      institutionId: teacher.institutionId,
+      actorUserId: teacher.userId,
+      actorRole: teacher.role,
+      action: 'TEACHER_BROADCAST_START',
+      entityType: 'CLASSROOM',
+      entityId: teacher.institutionId,
+      ipAddress: client.handshake.address,
+      details: { sessionId, mode, targetCount },
+    });
+
+    client.emit('TEACHER_BROADCAST_STARTED', { sessionId, targetCount });
+  }
+
+  @SubscribeMessage('TEACHER_BROADCAST_STOP')
+  async handleTeacherBroadcastStop(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { sessionId?: string },
+  ) {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) return;
+
+    this.logger.log(`[BROADCAST] Docente ${teacher.email} finalizó la presentación de pantalla`);
+
+    for (const [socketId, agent] of this.connectedAgents.entries()) {
+      if (agent.institutionId === teacher.institutionId) {
+        const envelope = createEnvelope(PacketType.TEACHER_BROADCAST_STOP, 'SERVER', 'server', {
+          sessionId: body?.sessionId,
+          teacherId: teacher.userId,
+        });
+        this.emitToSocket(socketId, PacketType.TEACHER_BROADCAST_STOP, envelope);
+      }
+    }
+
+    void this.writeAudit({
+      institutionId: teacher.institutionId,
+      actorUserId: teacher.userId,
+      actorRole: teacher.role,
+      action: 'TEACHER_BROADCAST_STOP',
+      entityType: 'CLASSROOM',
+      entityId: teacher.institutionId,
+      ipAddress: client.handshake.address,
+      details: { sessionId: body?.sessionId },
+    });
+
+    client.emit('TEACHER_BROADCAST_STOPPED', { success: true });
+  }
+
+  // -------------------------------------------------------------
+  // VEYON MODULE: POPUP TEXT MESSAGING
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_SEND_POPUP_MESSAGE')
+  async handleTeacherSendPopupMessage(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      targetDeviceId?: string;
+      title?: string;
+      message: string;
+      priority?: 'normal' | 'urgent' | 'announcement';
+    },
+  ) {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) {
+      client.emit('TEACHER_ERROR', { code: 'UNAUTHORIZED', message: 'Docente no autenticado' });
+      return;
+    }
+
+    if (!body?.message || body.message.trim().length === 0) {
+      client.emit('TEACHER_ERROR', { code: 'INVALID_PAYLOAD', message: 'El mensaje no puede estar vacío' });
+      return;
+    }
+
+    const messageId = randomUUID();
+    const payloadData = {
+      messageId,
+      teacherId: teacher.userId,
+      teacherName: teacher.email,
+      title: body.title || 'Aviso del Profesor',
+      message: body.message.trim(),
+      priority: body.priority || 'normal',
+      sentAt: Date.now(),
+      targetDeviceId: body.targetDeviceId,
+    };
+
+    let deliveredCount = 0;
+    if (body.targetDeviceId) {
+      const agentSocketId = this.deviceToAgentSocket.get(body.targetDeviceId);
+      if (agentSocketId) {
+        const agent = this.connectedAgents.get(agentSocketId);
+        if (agent && agent.institutionId === teacher.institutionId && !agent.quarantined) {
+          const envelope = createEnvelope(PacketType.POPUP_MESSAGE, 'SERVER', 'server', payloadData);
+          if (this.emitToSocket(agentSocketId, PacketType.POPUP_MESSAGE, envelope)) {
+            deliveredCount = 1;
+          }
+        }
+      }
+    } else {
+      for (const [socketId, agent] of this.connectedAgents.entries()) {
+        if (agent.institutionId === teacher.institutionId && !agent.quarantined) {
+          const envelope = createEnvelope(PacketType.POPUP_MESSAGE, 'SERVER', 'server', payloadData);
+          if (this.emitToSocket(socketId, PacketType.POPUP_MESSAGE, envelope)) {
+            deliveredCount++;
+          }
+        }
+      }
+    }
+
+    void this.writeAudit({
+      institutionId: teacher.institutionId,
+      actorUserId: teacher.userId,
+      actorRole: teacher.role,
+      action: 'SEND_POPUP_MESSAGE',
+      entityType: 'DEVICE',
+      entityId: body.targetDeviceId || 'BROADCAST',
+      ipAddress: client.handshake.address,
+      details: { messageId, deliveredCount, priority: payloadData.priority },
+    });
+
+    client.emit('POPUP_MESSAGE_DISPATCHED', { messageId, deliveredCount });
+  }
+
+  // -------------------------------------------------------------
+  // VEYON MODULE: POWER MANAGEMENT (REBOOT, SHUTDOWN, LOGOUT, WOL)
+  // -------------------------------------------------------------
+  @SubscribeMessage('TEACHER_POWER_ACTION')
+  async handleTeacherPowerAction(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: {
+      targetDeviceId?: string;
+      operation: 'reboot' | 'shutdown' | 'logout' | 'wakeOnLan';
+      delaySeconds?: number;
+      reason?: string;
+      force?: boolean;
+    },
+  ) {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher) {
+      client.emit('TEACHER_ERROR', { code: 'UNAUTHORIZED', message: 'Docente no autenticado' });
+      return;
+    }
+
+    if (!body?.operation) {
+      client.emit('TEACHER_ERROR', { code: 'INVALID_PAYLOAD', message: 'Operación de energía requerida' });
+      return;
+    }
+
+    const actionId = randomUUID();
+    const packetData = {
+      actionId,
+      teacherId: teacher.userId,
+      operation: body.operation,
+      delaySeconds: body.delaySeconds ?? 5,
+      reason: body.reason || 'Orden del docente',
+      force: body.force ?? true,
+      targetDeviceId: body.targetDeviceId,
+    };
+
+    let dispatchedCount = 0;
+    if (body.targetDeviceId) {
+      const agentSocketId = this.deviceToAgentSocket.get(body.targetDeviceId);
+      if (agentSocketId) {
+        const agent = this.connectedAgents.get(agentSocketId);
+        if (agent && agent.institutionId === teacher.institutionId && !agent.quarantined) {
+          const envelope = createEnvelope(PacketType.POWER_ACTION, 'SERVER', 'server', packetData);
+          if (this.emitToSocket(agentSocketId, PacketType.POWER_ACTION, envelope)) {
+            dispatchedCount = 1;
+          }
+        }
+      }
+    } else {
+      for (const [socketId, agent] of this.connectedAgents.entries()) {
+        if (agent.institutionId === teacher.institutionId && !agent.quarantined) {
+          const envelope = createEnvelope(PacketType.POWER_ACTION, 'SERVER', 'server', packetData);
+          if (this.emitToSocket(socketId, PacketType.POWER_ACTION, envelope)) {
+            dispatchedCount++;
+          }
+        }
+      }
+    }
+
+    void this.writeAudit({
+      institutionId: teacher.institutionId,
+      actorUserId: teacher.userId,
+      actorRole: teacher.role,
+      action: `POWER_${body.operation.toUpperCase()}`,
+      entityType: 'DEVICE',
+      entityId: body.targetDeviceId || 'ALL',
+      ipAddress: client.handshake.address,
+      details: { actionId, operation: body.operation, dispatchedCount },
+    });
+
+    client.emit('POWER_ACTION_DISPATCHED', { actionId, dispatchedCount, operation: body.operation });
+  }
+
+  @SubscribeMessage('POWER_ACTION_RESULT')
+  handlePowerActionResult(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() payload: { actionId: string; operation: string; success: boolean; error?: string },
+  ) {
+    const agent = this.connectedAgents.get(client.id);
+    if (!agent || !agent.institutionId) return;
+
+    this.logger.log(`[POWER RESULT] Dispositivo ${agent.hostname} (${agent.deviceId}): ${payload.operation} -> ${payload.success ? 'ÉXITO' : 'FALLO'}`);
+
+    for (const [socketId, teacher] of this.connectedTeachers.entries()) {
+      if (teacher.institutionId === agent.institutionId) {
+        this.server.to(socketId).emit('DEVICE_POWER_RESULT', {
+          deviceId: agent.deviceId,
+          hostname: agent.hostname,
+          ...payload,
+        });
+      }
+    }
+  }
+
   private async getOrStartRemoteControlSession(
     client: Socket,
     deviceId: string,

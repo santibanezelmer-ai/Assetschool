@@ -219,6 +219,32 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
         // -------------------------------------------------------------
         case "REMOTE_INPUT_EVENT":
             handleRemoteInputEvent(payload: payload)
+
+        // -------------------------------------------------------------
+        // VEYON MODULES: LOCK, MESSAGE, POWER & BROADCAST
+        // -------------------------------------------------------------
+        case "LOCK_SCREEN", "TEACHER_LOCK_CLASSROOM", "TEACHER_LOCK_DEVICE":
+            let msg = payload?["message"] as? String ?? "Atención al frente. Pausa pedagógica activa."
+            let teacher = payload?["teacherName"] as? String ?? "el Profesor"
+            print("[GATEWAY CLIENT] 🔒 Bloqueo pedagógico recibido: \(msg)")
+            LockCurtainManager.shared.show(message: msg, teacherName: teacher)
+
+        case "UNLOCK_SCREEN", "TEACHER_UNLOCK_CLASSROOM", "TEACHER_UNLOCK_DEVICE":
+            print("[GATEWAY CLIENT] 🟢 Desbloqueo de estación recibido.")
+            LockCurtainManager.shared.hide()
+
+        case "POPUP_MESSAGE":
+            handlePopupMessage(payload: payload)
+
+        case "POWER_ACTION":
+            handlePowerAction(payload: payload)
+
+        case "TEACHER_BROADCAST_START":
+            let teacher = payload?["teacherName"] as? String ?? "el Profesor"
+            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente iniciada por \(teacher)")
+
+        case "TEACHER_BROADCAST_STOP":
+            print("[GATEWAY CLIENT] 📡 Transmisión de pantalla docente finalizada.")
             
         default:
             break
@@ -519,6 +545,60 @@ public class GatewayClient: NSObject, URLSessionWebSocketDelegate {
             keyCode: keyCode,
             keyText: keyText
         )
+    }
+
+    private func handlePopupMessage(payload: [String: Any]?) {
+        guard let p = payload else { return }
+        let title = (p["title"] as? String) ?? "Aviso del Profesor"
+        let message = (p["message"] as? String) ?? ""
+        let sender = (p["teacherName"] as? String) ?? "Profesor"
+
+        print("[GATEWAY CLIENT] 📢 Mensaje emergente recibido de \(sender): \"\(message)\"")
+
+        DispatchQueue.main.async {
+            let alert = NSAlert()
+            alert.messageText = "📢 \(title)"
+            alert.informativeText = "\(message)\n\n— Enviado por: \(sender)"
+            alert.alertStyle = .informational
+            alert.addButton(withTitle: "Entendido")
+            alert.window.level = .floating
+            alert.runModal()
+        }
+    }
+
+    private func handlePowerAction(payload: [String: Any]?) {
+        guard let p = payload, let op = p["operation"] as? String else { return }
+        let actionId = (p["actionId"] as? String) ?? UUID().uuidString
+        let delay = (p["delaySeconds"] as? Int) ?? 5
+
+        print("[GATEWAY CLIENT] ⚡ Acción de energía recibida: \(op) (retardo: \(delay)s)")
+
+        let script: String
+        switch op.lowercased() {
+        case "reboot":
+            script = "tell application \"System Events\" to restart"
+        case "shutdown":
+            script = "tell application \"System Events\" to shut down"
+        case "logout":
+            script = "tell application \"System Events\" to log out"
+        default:
+            script = ""
+        }
+
+        if !script.isEmpty {
+            DispatchQueue.global().asyncAfter(deadline: .now() + .seconds(delay)) {
+                let proc = Process()
+                proc.launchPath = "/usr/bin/osascript"
+                proc.arguments = ["-e", script]
+                try? proc.run()
+            }
+        }
+
+        sendEvent(name: "POWER_ACTION_RESULT", payload: [
+            "actionId": actionId,
+            "operation": op,
+            "success": true
+        ])
     }
     
     private func sendCommandResult(commandId: String, success: Bool, error: String? = nil) {
