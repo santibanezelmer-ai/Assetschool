@@ -1683,9 +1683,52 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return;
     }
 
+    // Role check: Only TEACHER, INSTITUTION_ADMIN, or SUPERADMIN can broadcast screen
+    const normalizedRole = typeof teacher.role === 'string' ? teacher.role.toUpperCase() : teacher.role;
+    if (
+      normalizedRole !== SystemRole.TEACHER &&
+      normalizedRole !== SystemRole.INSTITUTION_ADMIN &&
+      normalizedRole !== SystemRole.SUPERADMIN
+    ) {
+      this.logger.warn(`[SECURITY AUDIT] Usuario sin rol docente intentó iniciar Broadcast: ${teacher.email} (Rol: ${teacher.role})`);
+      void this.writeAudit({
+        institutionId: teacher.institutionId,
+        actorUserId: teacher.userId,
+        actorRole: teacher.role,
+        action: 'TEACHER_BROADCAST_BLOCKED_UNAUTHORIZED_ROLE',
+        entityType: 'CLASSROOM',
+        entityId: body?.classroomId || teacher.classroomId || 'default',
+        ipAddress: client.handshake.address,
+        details: { requestedClassroomId: body?.classroomId, userRole: teacher.role },
+      });
+      client.emit('TEACHER_ERROR', { code: 'FORBIDDEN', message: 'Permisos insuficientes para iniciar transmisión' });
+      return;
+    }
+
     const sessionId = body?.sessionId || randomUUID();
     const mode = body?.mode || 'fullscreen';
     const classroomId = body?.classroomId || teacher.classroomId || 'default';
+
+    // R0 / S1: Verify that classroom belongs to teacher's institution
+    if (classroomId !== 'default') {
+      const isClassValid = await this.validateClassroomForInstitution(classroomId, teacher.institutionId, teacher.role);
+      if (!isClassValid.ok) {
+        this.logger.warn(`[SECURITY AUDIT] Docente ${teacher.email} intentó transmitir en aula ajena o inexistente (${classroomId}): ${isClassValid.error}`);
+        void this.writeAudit({
+          institutionId: teacher.institutionId,
+          actorUserId: teacher.userId,
+          actorRole: teacher.role,
+          action: 'TEACHER_BROADCAST_BLOCKED_UNAUTHORIZED_CLASSROOM',
+          entityType: 'CLASSROOM',
+          entityId: classroomId,
+          ipAddress: client.handshake.address,
+          details: { requestedClassroomId: classroomId, teacherInstitutionId: teacher.institutionId, error: isClassValid.error },
+        });
+        client.emit('TEACHER_ERROR', { code: 'FORBIDDEN_CLASSROOM', message: isClassValid.error });
+        return;
+      }
+    }
+
     this.logger.log(`[BROADCAST] Docente ${teacher.email} iniciando presentación de pantalla (${mode}) en aula ${classroomId}`);
 
     let sfuResult: { producerId: string; sdpAnswer: string } | null = null;
@@ -1766,7 +1809,38 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       return;
     }
 
+    // 1. Verify if device is revoked in DB
+    if (this.databaseService.isDatabaseReady) {
+      const devCheck = await this.databaseService.query(
+        'SELECT is_revoked, revocation_reason FROM devices WHERE id = $1',
+        [agent.deviceId],
+      );
+      if (devCheck.rows.length === 0 || devCheck.rows[0].is_revoked) {
+        this.logger.warn(`[SECURITY AUDIT] Intento de suscripción SFU desde dispositivo revocado: ${agent.deviceId}`);
+        client.emit('AGENT_ERROR', { code: 'DEVICE_REVOKED', message: 'Dispositivo revocado por el administrador' });
+        return;
+      }
+    }
+
     const classroomId = body?.classroomId || agent.classroomId || 'default';
+
+    // 2. Verify that classroom belongs to student's institution
+    if (classroomId !== 'default') {
+      const isClassValid = await this.validateClassroomForInstitution(classroomId, agent.institutionId);
+      if (!isClassValid.ok) {
+        this.logger.warn(`[SECURITY AUDIT] Estudiante ${agent.deviceId} intentó acceder a aula ajena: ${classroomId} (${isClassValid.error})`);
+        client.emit('AGENT_ERROR', { code: 'FORBIDDEN_INSTITUTION', message: isClassValid.error });
+        return;
+      }
+    }
+
+    // 3. Verify classroom matching if assigned
+    if (agent.classroomId && body?.classroomId && body.classroomId !== agent.classroomId) {
+      this.logger.warn(`[SECURITY AUDIT] Estudiante ${agent.deviceId} intentó suscribirse a otra aula: ${body.classroomId} (Asignada: ${agent.classroomId})`);
+      client.emit('AGENT_ERROR', { code: 'FORBIDDEN_CLASSROOM', message: 'El estudiante no pertenece al aula solicitada' });
+      return;
+    }
+
     try {
       const { consumerId, sdpAnswer } = await this.sfuService.handleStudentBroadcastSubscribe(
         agent.institutionId,
@@ -1784,6 +1858,22 @@ export class AgentGateway implements OnGatewayConnection, OnGatewayDisconnect, O
       this.logger.error(`Error al suscribir estudiante ${agent.deviceId} a SFU: ${err.message}`);
       client.emit('AGENT_ERROR', { code: 'SFU_SUBSCRIBE_FAILED', message: err.message });
     }
+  }
+
+  @SubscribeMessage('TEACHER_BROADCAST_STATS')
+  async handleTeacherBroadcastStats(
+    @ConnectedSocket() client: Socket,
+    @MessageBody() body: { classroomId?: string },
+  ) {
+    const teacher = this.connectedTeachers.get(client.id);
+    if (!teacher || !this.sfuService) {
+      client.emit('TEACHER_ERROR', { code: 'UNAUTHORIZED', message: 'No autorizado' });
+      return;
+    }
+    const classroomId = body?.classroomId || teacher.classroomId || 'default';
+    const stats = await this.sfuService.getSessionStats(teacher.institutionId, classroomId);
+    const workerUsage = await this.sfuService.getWorkerResourceUsage();
+    client.emit('TEACHER_BROADCAST_STATS_RESPONSE', { stats, workerUsage });
   }
 
   @SubscribeMessage('TEACHER_BROADCAST_STOP')

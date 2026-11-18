@@ -364,6 +364,46 @@ export class SfuService implements OnModuleInit, OnModuleDestroy {
     return broadcast ? broadcast.consumers.size : 0;
   }
 
+  public async getSessionStats(institutionId: string, classroomId: string): Promise<any> {
+    const key = `${institutionId}:${classroomId}`;
+    const broadcast = this.activeBroadcasts.get(key);
+    if (!broadcast) return null;
+
+    const producerStats = await broadcast.producer.getStats();
+    const sendTransportStats = await broadcast.sendTransport.getStats();
+
+    const consumerStatsList: any[] = [];
+    for (const [socketId, item] of broadcast.consumers.entries()) {
+      const cStats = await item.consumer.getStats();
+      const tStats = await item.transport.getStats();
+      consumerStatsList.push({
+        socketId,
+        studentDeviceId: item.studentDeviceId,
+        consumerStats: cStats,
+        transportStats: tStats,
+      });
+    }
+
+    return {
+      classroomId,
+      producerId: broadcast.producerId,
+      producerStats,
+      sendTransportStats,
+      consumerCount: broadcast.consumers.size,
+      consumerStatsList,
+      dtlsState: sendTransportStats[0]?.dtlsState,
+      iceState: sendTransportStats[0]?.iceState,
+      iceSelectedTuple: (sendTransportStats[0] as any)?.iceSelectedTuple,
+      rtpBytesReceived: (sendTransportStats[0] as any)?.rtpBytesReceived || 0,
+      rtpBytesSent: (sendTransportStats[0] as any)?.rtpBytesSent || 0,
+    };
+  }
+
+  public async getWorkerResourceUsage(): Promise<mediasoup.types.WorkerResourceUsage | null> {
+    if (!this.worker || this.worker.closed) return null;
+    return this.worker.getResourceUsage();
+  }
+
   private buildSdpAnswer(
     transport: mediasoup.types.WebRtcTransport,
     remoteSdpOffer: string,
