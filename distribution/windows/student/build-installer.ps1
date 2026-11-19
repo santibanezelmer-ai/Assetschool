@@ -17,7 +17,8 @@ param(
     [string]$Runtime = "win-x64",
     [string]$OutputPath = "$PSScriptRoot\..\..\..\dist\installers\windows",
     [switch]$SkipExe = $false,
-    [switch]$SkipMsi = $false
+    [switch]$SkipMsi = $false,
+    [switch]$RequireExe = $false
 )
 
 $ErrorActionPreference = "Stop"
@@ -209,9 +210,16 @@ if (-not $SkipExe -and $isccPath) {
         Write-Host "    SHA-256:   $exeHash" -ForegroundColor Green
         $exeBuilt = $true
     } else {
-        Write-Warning "Fallo en la ejecución de Inno Setup (código de salida: $LASTEXITCODE)."
+        if ($RequireExe) {
+            throw "COMPILACIÓN FALLIDA: Fallo en la ejecución de Inno Setup (código de salida: $LASTEXITCODE)."
+        } else {
+            Write-Warning "Fallo en la ejecución de Inno Setup (código de salida: $LASTEXITCODE)."
+        }
     }
 } else {
+    if ($RequireExe) {
+        throw "COMPILACIÓN FALLIDA: Se requirió generar el ejecutable Inno Setup (-RequireExe), pero el compilador 'iscc' no fue encontrado en PATH ni en Program Files."
+    }
     Write-Host "  ℹ [ESTADO SETUP EXE]: Inno Setup Compiler (iscc) no detectado en PATH ni en Program Files." -ForegroundColor Yellow
     Write-Host "    Para generar el ejecutable único 'AssetSchool-Student-Setup.exe':" -ForegroundColor Yellow
     Write-Host "    Instale Inno Setup 6 en Windows ('winget install JRSoftware.InnoSetup') y vuelva a ejecutar este script." -ForegroundColor DarkGray
@@ -287,6 +295,10 @@ foreach ($sf in $SetupFiles) {
     }
     if (Test-Path $sfPath) {
         Copy-Item -Path $sfPath -Destination $ZipStaging -Force
+        $destOutputPath = Join-Path $OutputPath $sf
+        if (-not (Test-Path $destOutputPath)) {
+            Copy-Item -Path $sfPath -Destination $destOutputPath -Force
+        }
         Write-Host "  ✓ Incluido archivo de soporte: $sf" -ForegroundColor DarkGray
     } else {
         Write-Warning "Archivo de soporte no encontrado: $sf"

@@ -100,5 +100,23 @@ npm run web:dev
 
 ---
 
+## 📦 Compilación y Distribución de Instaladores
+
+### Agente de Estudiante para Windows 11 / 10 x64 (`AssetSchool-Student-Setup.exe`)
+El proyecto incluye un flujo de compilación totalmente automatizado en **GitHub Actions** para generar un instalador gráfico profesional de un solo archivo (`AssetSchool-Student-Setup.exe`), autocontenido y listo para desplegar mediante pendrive USB sin requerir terminales ni dependencias preinstaladas:
+
+1. Dirígete a la pestaña **Actions** en el repositorio GitHub: `https://github.com/santibanezelmer-ai/Assetschool/actions`.
+2. Selecciona el workflow **Build Windows Student Installer**.
+3. Haz clic en **Run workflow** (sobre la rama deseada, ej. `feat/native-multiplatform-veyon-suite`).
+4. Al finalizar la compilación en el runner Windows, descarga el artefacto **`AssetSchool-Student-Windows-Installer`**.
+5. El paquete ZIP contiene el ejecutable de instalación `AssetSchool-Student-Setup.exe`, su verificación criptográfica `SHA256SUMS.txt` y la guía técnica `README_INSTALACION_WINDOWS11.txt`.
+
+Para compilación manual en un equipo Windows local con .NET 8 SDK e Inno Setup 6:
+```powershell
+powershell -ExecutionPolicy Bypass -File .\distribution\windows\student\build-installer.ps1 -Configuration Release -Runtime win-x64 -RequireExe -SkipMsi
+```
+
+---
+
 ## ⚖️ Principios de Privacidad y Ética
 AssetSchool **no incluye keyloggers, captura encubierta ni herramientas de espionaje**. La supervisión es estrictamente pedagógica, institucionalmente consentida y visible para los estudiantes en todo momento.

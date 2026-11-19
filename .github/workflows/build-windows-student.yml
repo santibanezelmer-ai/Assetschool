@@ -1,0 +1,111 @@
+name: Build Windows Student Installer
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  build-installer:
+    name: Build AssetSchool Student Setup (Windows 11 x64)
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Install Inno Setup 6
+        run: |
+          choco install innosetup --no-progress
+          $isccDir = "C:\Program Files (x86)\Inno Setup 6"
+          if (Test-Path $isccDir) {
+            echo "$isccDir" >> $env:GITHUB_PATH
+            Write-Host "Inno Setup 6 agregado al PATH: $isccDir"
+          } else {
+            Write-Error "No se encontro el directorio de Inno Setup 6 tras la instalacion."
+            exit 1
+          }
+
+      - name: Build and Package Student Windows Installer
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File .\distribution\windows\student\build-installer.ps1 -Configuration Release -Runtime win-x64 -RequireExe -SkipMsi
+
+      - name: Validate Artifacts and Generate Checksums
+        run: |
+          $setupExe = "dist\installers\windows\AssetSchool-Student-Setup.exe"
+          $serviceExe = "dist\bin\student-windows\Service\AssetSchool.Student.Service.exe"
+          $sessionExe = "dist\bin\student-windows\SessionAgent\AssetSchool.Student.SessionAgent.exe"
+          $readmeFile = "distribution\windows\student\README_INSTALACION_WINDOWS11.txt"
+          if (-not (Test-Path $readmeFile)) {
+            $readmeFile = "dist\installers\windows\README_INSTALACION_WINDOWS11.txt"
+          }
+
+          # 1. Validar presencia de ejecutables segregados
+          if (-not (Test-Path $serviceExe)) {
+            Write-Error "ERROR CRÍTICO: No se encontró '$serviceExe'."
+            exit 1
+          }
+          if (-not (Test-Path $sessionExe)) {
+            Write-Error "ERROR CRÍTICO: No se encontró '$sessionExe'."
+            exit 1
+          }
+
+          # 2. Validar presencia del instalador único final
+          if (-not (Test-Path $setupExe)) {
+            Write-Error "ERROR CRÍTICO: No se generó el instalador '$setupExe'."
+            exit 1
+          }
+
+          $exeItem = Get-Item $setupExe
+          if ($exeItem.Length -lt 10485760) {
+            Write-Error "ERROR CRÍTICO: Tamaño sospechoso en '$setupExe' ($($exeItem.Length) bytes). Se esperaba > 10 MB."
+            exit 1
+          }
+
+          # 3. Validar cabecera binaria DOS MZ
+          $stream = [System.IO.File]::OpenRead($setupExe)
+          $reader = New-Object System.IO.BinaryReader($stream)
+          $dosMagic = $reader.ReadUInt16()
+          $stream.Close()
+
+          if ($dosMagic -ne 0x5A4D) {
+            Write-Error "ERROR CRÍTICO: '$setupExe' no posee cabecera ejecutable DOS MZ válida."
+            exit 1
+          }
+
+          # 4. Calcular SHA-256 del instalador
+          $hash = (Get-FileHash -Path $setupExe -Algorithm SHA256).Hash
+          Write-Host "======================================================================"
+          Write-Host "   INSTALADOR VERIFICADO EXITOSAMENTE"
+          Write-Host "   Archivo: $setupExe"
+          Write-Host "   Tamaño:  $([math]::Round($exeItem.Length / 1MB, 2)) MB"
+          Write-Host "   SHA-256: $hash"
+          Write-Host "======================================================================"
+
+          # 5. Preparar directorio de artefactos para publicación
+          $artifactDir = "dist\installers\windows\_artifact"
+          New-Item -ItemType Directory -Path $artifactDir -Force | Out-Null
+
+          Copy-Item -Path $setupExe -Destination $artifactDir -Force
+          Copy-Item -Path $readmeFile -Destination $artifactDir -Force
+
+          $checksumLine = "$hash  AssetSchool-Student-Setup.exe"
+          Set-Content -Path (Join-Path $artifactDir "SHA256SUMS.txt") -Value $checksumLine -Encoding utf8
+          Write-Host "Archivo SHA256SUMS.txt generado con éxito."
+
+      - name: Upload Windows Student Installer Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AssetSchool-Student-Windows-Installer
+          path: dist/installers/windows/_artifact/
+          retention-days: 30
+          if-no-files-found: error

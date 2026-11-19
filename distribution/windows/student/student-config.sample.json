@@ -1,0 +1,10 @@
+{
+  "serverHost": "192.168.4.42",
+  "serverPort": 3000,
+  "serverUrl": "http://192.168.4.42:3000",
+  "autoDiscovery": true,
+  "institutionId": "i1111111-1111-1111-1111-111111111111",
+  "classroomId": "c1111111-1111-1111-1111-111111111111",
+  "enrollmentToken": "ENROLL-PILOTO-LA-2026",
+  "version": "1.2.0-validation"
+}

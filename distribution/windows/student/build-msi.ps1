@@ -9,7 +9,8 @@ param(
     [string]$Runtime = "win-x64",
     [string]$OutputPath = "$PSScriptRoot\..\..\..\dist\installers\windows",
     [switch]$SkipMsi = $false,
-    [switch]$SkipExe = $false
+    [switch]$SkipExe = $false,
+    [switch]$RequireExe = $false
 )
 
-& "$PSScriptRoot\build-installer.ps1" -Configuration $Configuration -Runtime $Runtime -OutputPath $OutputPath -SkipMsi:$SkipMsi -SkipExe:$SkipExe
+& "$PSScriptRoot\build-installer.ps1" -Configuration $Configuration -Runtime $Runtime -OutputPath $OutputPath -SkipMsi:$SkipMsi -SkipExe:$SkipExe -RequireExe:$RequireExe
