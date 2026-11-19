@@ -21,6 +21,7 @@ public class MasterGatewayClient: ObservableObject {
         description: "Aula Informática Principal"
     )
     @Published public var availableClassrooms: [ClassroomInfo] = [
+        ClassroomInfo(id: "c1111111-1111-1111-1111-111111111111", name: "Laboratorio TIC 1", description: "Aula Piloto Escolar"),
         ClassroomInfo(id: "d1111111-1111-1111-1111-111111111111", name: "Laboratorio 1", description: "Aula Informática Principal"),
         ClassroomInfo(id: "d2222222-2222-2222-2222-222222222222", name: "Laboratorio 2", description: "Laboratorio de Ciencias"),
         ClassroomInfo(id: "a63e092c-1a03-40ee-861d-55bd9564c3c2", name: "Laboratorio Alfa", description: "Sala de Computación B")
