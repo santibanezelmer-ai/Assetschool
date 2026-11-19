@@ -1,68 +1,277 @@
 ﻿<#
 .SYNOPSIS
-    Script de compilación y empaquetado del instalador MSI de AssetSchool Student.
+    Script de compilación, validación PE x64 y empaquetado de AssetSchool Student Windows.
 .DESCRIPTION
-    Compila los proyectos C# (.NET 8) de Windows Service y SessionAgent en modo Release
-    autocontenido (win-x64) y ejecuta WiX Toolset para producir AssetSchool.Student.msi.
+    1. Compila en modo Release autocontenido (win-x64) AssetSchool.Student.Service y
+       AssetSchool.Student.SessionAgent en directorios temporales aislados para evitar sobrescrituras.
+    2. Valida byte a byte la integridad de ambos ejecutables (cabeceras DOS MZ, PE\0\0, arquitectura AMD64).
+    3. Falla inmediatamente si falta algún ejecutable o si no es un binario PE x64 válido.
+    4. Ensambla los binarios y dependencias en dist/bin/student-windows.
+    5. Intenta generar el paquete MSI con WiX Toolset; si WiX no está disponible, informa claramente
+       que el MSI no se ha generado (sin recurrir a archivos simulados).
+    6. Genera o actualiza el paquete ZIP de validación con los ejecutables reales, dependencias y scripts.
 #>
 param(
     [string]$Configuration = "Release",
     [string]$Runtime = "win-x64",
-    [string]$OutputPath = "$PSScriptRoot\..\..\..\dist\installers\windows"
+    [string]$OutputPath = "$PSScriptRoot\..\..\..\dist\installers\windows",
+    [switch]$SkipMsi = $false
 )
 
 $ErrorActionPreference = "Stop"
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "   ASSETSCHOOL — COMPILACIÓN DE INSTALADOR MSI (STUDENT WINDOWS)     " -ForegroundColor Cyan
+Write-Host "   ASSETSCHOOL — COMPILACIÓN Y ENSAMBLADO SEGURO (STUDENT WINDOWS)   " -ForegroundColor Cyan
 Write-Host "======================================================================" -ForegroundColor Cyan
+Write-Host "Configuración: $Configuration | Runtime: $Runtime"
+
+# -----------------------------------------------------------------------------
+# 0. VERIFICACIÓN DE HERRAMIENTAS DE COMPILACIÓN (.NET SDK)
+# -----------------------------------------------------------------------------
+$dotnetCmd = Get-Command "dotnet" -ErrorAction SilentlyContinue
+if (-not $dotnetCmd) {
+    throw "ERROR CRÍTICO: No se encontró 'dotnet' en PATH. Se requiere .NET 8 SDK (winget install Microsoft.DotNet.SDK.8) para compilar los proyectos C#."
+}
 
 $RepoRoot = Resolve-Path "$PSScriptRoot\..\..\.."
 $ServiceProject = "$RepoRoot\agents\student-windows\src\AssetSchool.Student.Service\AssetSchool.Student.Service.csproj"
 $SessionProject = "$RepoRoot\agents\student-windows\src\AssetSchool.Student.SessionAgent\AssetSchool.Student.SessionAgent.csproj"
-$PublishDir = "$RepoRoot\dist\bin\student-windows"
 
-Write-Host "`n[1/3] Compilando y publicando binarios .NET 8..." -ForegroundColor Yellow
+if (-not (Test-Path $ServiceProject)) { throw "Proyecto no encontrado: $ServiceProject" }
+if (-not (Test-Path $SessionProject)) { throw "Proyecto no encontrado: $SessionProject" }
+
+$PublishDir = "$RepoRoot\dist\bin\student-windows"
+$TempBase = "$RepoRoot\dist\bin\_build_staging"
+$TempServiceDir = "$TempBase\service"
+$TempSessionDir = "$TempBase\sessionagent"
+
+# Limpiar directorios de compilación previa
+if (Test-Path $TempBase) { Remove-Item -Recurse -Force $TempBase }
+New-Item -ItemType Directory -Path $TempServiceDir -Force | Out-Null
+New-Item -ItemType Directory -Path $TempSessionDir -Force | Out-Null
+
+# -----------------------------------------------------------------------------
+# 1. FUNCIÓN DE VALIDACIÓN BINARIA ESTRICTA (PE x64 / AMD64)
+# -----------------------------------------------------------------------------
+function Test-ValidPeX64Binary {
+    param([string]$FilePath)
+    if (-not (Test-Path $FilePath)) {
+        return @{ Valid = $false; Reason = "El archivo no existe en el disco." }
+    }
+    try {
+        $fileInfo = Get-Item $FilePath
+        if ($fileInfo.Length -lt 102400) { # Ejecutable .NET win-x64 autocontenido mínimo > 100 KB
+            return @{ Valid = $false; Reason = "Tamaño sospechoso o insuficiente ($($fileInfo.Length) bytes)." }
+        }
+        $stream = [System.IO.File]::OpenRead($FilePath)
+        $reader = New-Object System.IO.BinaryReader($stream)
+
+        # 1. Cabecera DOS 'MZ' (0x5A4D)
+        $dosMagic = $reader.ReadUInt16()
+        if ($dosMagic -ne 0x5A4D) {
+            $stream.Close()
+            return @{ Valid = $false; Reason = "Cabecera DOS MZ ausente (no es un ejecutable Windows)." }
+        }
+
+        # 2. Offset a cabecera PE en 0x3C
+        $stream.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $peOffset = $reader.ReadInt32()
+        if ($peOffset -lt 0 -or $peOffset -gt ($stream.Length - 24)) {
+            $stream.Close()
+            return @{ Valid = $false; Reason = "Offset de cabecera PE inválido o fuera de rango ($peOffset)." }
+        }
+
+        # 3. Firma PE 'PE\0\0' (0x00004550)
+        $stream.Seek($peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
+        $peSig = $reader.ReadUInt32()
+        if ($peSig -ne 0x00004550) {
+            $stream.Close()
+            return @{ Valid = $false; Reason = "Firma PE inválida (no es formato PE)." }
+        }
+
+        # 4. Arquitectura Machine en COFF header (0x8664 = IMAGE_FILE_MACHINE_AMD64)
+        $machine = $reader.ReadUInt16()
+        $stream.Close()
+
+        if ($machine -eq 0x8664) {
+            return @{ Valid = $true; Machine = "AMD64 / x64"; SizeBytes = $fileInfo.Length }
+        } else {
+            return @{ Valid = $false; Reason = "Arquitectura de procesador incompatible ($([Convert]::ToString($machine, 16))). Se requiere 0x8664 (AMD64)." }
+        }
+    } catch {
+        return @{ Valid = $false; Reason = "Error durante el análisis del binario: $_" }
+    }
+}
+
+# -----------------------------------------------------------------------------
+# 2. PUBLICACIÓN AISLADA DE AMBOS PROYECTOS (PREVIENE SOBRESCRITURAS)
+# -----------------------------------------------------------------------------
+Write-Host "`n[1/5] Publicando proyectos C# en directorios temporales aislados..." -ForegroundColor Yellow
+
+# A. Publicar AssetSchool.Student.Service
+Write-Host "  -> Compilando AssetSchool.Student.Service ($Configuration, $Runtime, self-contained)..." -ForegroundColor DarkGray
+& dotnet publish $ServiceProject -c $Configuration -r $Runtime --self-contained true -o $TempServiceDir
+if ($LASTEXITCODE -ne 0) {
+    throw "COMPILACIÓN FALLIDA: Fallo al publicar AssetSchool.Student.Service. Código de salida: $LASTEXITCODE"
+}
+
+# B. Publicar AssetSchool.Student.SessionAgent
+Write-Host "  -> Compilando AssetSchool.Student.SessionAgent ($Configuration, $Runtime, self-contained)..." -ForegroundColor DarkGray
+& dotnet publish $SessionProject -c $Configuration -r $Runtime --self-contained true -o $TempSessionDir
+if ($LASTEXITCODE -ne 0) {
+    throw "COMPILACIÓN FALLIDA: Fallo al publicar AssetSchool.Student.SessionAgent. Código de salida: $LASTEXITCODE"
+}
+
+# -----------------------------------------------------------------------------
+# 3. VALIDACIÓN ESTRICTA DE EJECUTABLES GENERADOS EN STAGING
+# -----------------------------------------------------------------------------
+Write-Host "`n[2/5] Validando cabeceras PE, arquitectura AMD64 y firmas SHA-256..." -ForegroundColor Yellow
+
+$ServiceExeStaged = Join-Path $TempServiceDir "AssetSchool.Student.Service.exe"
+$SessionExeStaged = Join-Path $TempSessionDir "AssetSchool.Student.SessionAgent.exe"
+
+$checkService = Test-ValidPeX64Binary -FilePath $ServiceExeStaged
+if (-not $checkService.Valid) {
+    throw "ERROR CRÍTICO: AssetSchool.Student.Service.exe no superó la validación. Motivo: $($checkService.Reason)"
+}
+$hashService = (Get-FileHash -Path $ServiceExeStaged -Algorithm SHA256).Hash
+Write-Host "  ✓ AssetSchool.Student.Service.exe válido [$($checkService.Machine), $($checkService.SizeBytes) bytes]" -ForegroundColor Green
+Write-Host "    SHA-256: $hashService" -ForegroundColor DarkGray
+
+$checkSession = Test-ValidPeX64Binary -FilePath $SessionExeStaged
+if (-not $checkSession.Valid) {
+    throw "ERROR CRÍTICO: AssetSchool.Student.SessionAgent.exe no superó la validación. Motivo: $($checkSession.Reason)"
+}
+$hashSession = (Get-FileHash -Path $SessionExeStaged -Algorithm SHA256).Hash
+Write-Host "  ✓ AssetSchool.Student.SessionAgent.exe válido [$($checkSession.Machine), $($checkSession.SizeBytes) bytes]" -ForegroundColor Green
+Write-Host "    SHA-256: $hashSession" -ForegroundColor DarkGray
+
+# -----------------------------------------------------------------------------
+# 4. ENSAMBLADO UNIFICADO EN dist/bin/student-windows
+# -----------------------------------------------------------------------------
+Write-Host "`n[3/5] Ensamblando binarios y dependencias en $PublishDir..." -ForegroundColor Yellow
+
 if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
 New-Item -ItemType Directory -Path $PublishDir -Force | Out-Null
 
-Write-Host "  -> Publicando AssetSchool.Student.Service ($Runtime)..."
-dotnet publish $ServiceProject -c $Configuration -r $Runtime --self-contained true -o $PublishDir
-if ($LASTEXITCODE -ne 0) { throw "Fallo al compilar AssetSchool.Student.Service" }
+# Copiar primero archivos del servicio
+Copy-Item -Path "$TempServiceDir\*" -Destination $PublishDir -Recurse -Force
 
-Write-Host "  -> Publicando AssetSchool.Student.SessionAgent ($Runtime)..."
-dotnet publish $SessionProject -c $Configuration -r $Runtime --self-contained true -o $PublishDir
-if ($LASTEXITCODE -ne 0) { throw "Fallo al compilar AssetSchool.Student.SessionAgent" }
+# Copiar archivos del SessionAgent (sobrescribiendo de forma segura bibliotecas de runtime idénticas)
+Copy-Item -Path "$TempSessionDir\*" -Destination $PublishDir -Recurse -Force
 
-Write-Host "`n[2/3] Generando paquete MSI con WiX Toolset..." -ForegroundColor Yellow
+# Limpiar staging temporal
+Remove-Item -Recurse -Force $TempBase
+
+# Confirmar presencia final de ambos binarios en PublishDir
+$FinalServiceExe = Join-Path $PublishDir "AssetSchool.Student.Service.exe"
+$FinalSessionExe = Join-Path $PublishDir "AssetSchool.Student.SessionAgent.exe"
+
+if (-not (Test-Path $FinalServiceExe) -or -not (Test-Path $FinalSessionExe)) {
+    throw "ERROR CRÍTICO: Fallo al ensamblar los ejecutables en $PublishDir."
+}
+Write-Host "  ✓ Ensamblado completado con éxito en $PublishDir." -ForegroundColor Green
+
+# -----------------------------------------------------------------------------
+# 5. GENERACIÓN DEL PAQUETE MSI (WIX TOOLSET)
+# -----------------------------------------------------------------------------
+Write-Host "`n[4/5] Evaluando generación de instalador MSI..." -ForegroundColor Yellow
 if (-not (Test-Path $OutputPath)) { New-Item -ItemType Directory -Path $OutputPath -Force | Out-Null }
 $WxsFile = "$PSScriptRoot\AssetSchool.Student.wxs"
 $MsiOutput = "$OutputPath\AssetSchool.Student.msi"
 
-# Verificar disponibilidad de WiX (wix.exe v4 o candle/light v3)
-if (Get-Command "wix" -ErrorAction SilentlyContinue) {
-    Write-Host "  -> Compilando con WiX v4..."
-    wix build $WxsFile -d PublishDir=$PublishDir -o $MsiOutput
-} elseif (Get-Command "candle" -ErrorAction SilentlyContinue -and Get-Command "light" -ErrorAction SilentlyContinue) {
-    Write-Host "  -> Compilando con WiX v3 (candle & light)..."
-    $WixObj = "$PublishDir\AssetSchool.Student.wixobj"
-    candle -dPublishDir=$PublishDir $WxsFile -o $WixObj
-    light -ext WixUIExtension $WixObj -o $MsiOutput
-} else {
-    Write-Warning "WiX Toolset no encontrado en PATH. Los binarios fueron publicados en '$PublishDir'."
-    Write-Warning "Para generar el MSI, instale WiX Toolset v3/v4 o ejecute en un runner de CI con WiX preinstalado."
-    Write-Host "Generando descriptor de despliegue simulado para validación de arquitectura..."
-    Set-Content -Path "$OutputPath\AssetSchool.Student.wix-ready.txt" -Value "MSI ready to compile with WiX. PublishDir: $PublishDir"
-}
+# Eliminar descriptor simulado si existía previamente
+$legacyWixReady = "$OutputPath\AssetSchool.Student.wix-ready.txt"
+if (Test-Path $legacyWixReady) { Remove-Item -Force $legacyWixReady }
 
-Write-Host "`n[3/3] Verificando integridad de componentes publicados..." -ForegroundColor Yellow
-$RequiredFiles = @("AssetSchool.Student.Service.exe", "AssetSchool.Student.SessionAgent.exe")
-foreach ($rf in $RequiredFiles) {
-    $targetPath = Join-Path $PublishDir $rf
-    if (Test-Path $targetPath) {
-        $hash = (Get-FileHash $targetPath -Algorithm SHA256).Hash
-        Write-Host "  ✓ $rf presente [SHA-256: $hash]" -ForegroundColor Green
+$wixBuilt = $false
+if (-not $SkipMsi) {
+    if (Get-Command "wix" -ErrorAction SilentlyContinue) {
+        Write-Host "  -> Compilando con WiX v4..." -ForegroundColor DarkGray
+        & wix build $WxsFile -d PublishDir=$PublishDir -o $MsiOutput
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $MsiOutput)) {
+            $msiHash = (Get-FileHash -Path $MsiOutput -Algorithm SHA256).Hash
+            $msiSize = (Get-Item $MsiOutput).Length
+            Write-Host "  ✓ Instalador MSI generado con éxito: $MsiOutput [$msiSize bytes, SHA-256: $msiHash]" -ForegroundColor Green
+            $wixBuilt = $true
+        } else {
+            Write-Warning "Fallo en la ejecución de WiX v4 (código de salida: $LASTEXITCODE)."
+        }
+    } elseif (Get-Command "candle" -ErrorAction SilentlyContinue -and Get-Command "light" -ErrorAction SilentlyContinue) {
+        Write-Host "  -> Compilando con WiX v3 (candle & light)..." -ForegroundColor DarkGray
+        $WixObj = "$PublishDir\AssetSchool.Student.wixobj"
+        & candle -dPublishDir=$PublishDir $WxsFile -o $WixObj
+        & light -ext WixUIExtension $WixObj -o $MsiOutput
+        if ($LASTEXITCODE -eq 0 -and (Test-Path $MsiOutput)) {
+            $msiHash = (Get-FileHash -Path $MsiOutput -Algorithm SHA256).Hash
+            $msiSize = (Get-Item $MsiOutput).Length
+            Write-Host "  ✓ Instalador MSI generado con éxito: $MsiOutput [$msiSize bytes, SHA-256: $msiHash]" -ForegroundColor Green
+            $wixBuilt = $true
+        } else {
+            Write-Warning "Fallo en la ejecución de WiX v3 (código de salida: $LASTEXITCODE)."
+        }
     }
 }
 
-Write-Host "`nProceso completado con éxito." -ForegroundColor Green
+if (-not $wixBuilt) {
+    Write-Host "  ℹ [ESTADO MSI]: WiX Toolset no detectado en PATH. El archivo MSI NO se ha generado." -ForegroundColor Yellow
+    Write-Host "    Los binarios compilados están listos en '$PublishDir'." -ForegroundColor Yellow
+    Write-Host "    Para generar el MSI: instale WiX (dotnet tool install --global wix) y vuelva a ejecutar este script." -ForegroundColor DarkGray
+}
+
+# -----------------------------------------------------------------------------
+# 6. GENERACIÓN DEL PAQUETE ZIP DE VALIDACIÓN CON BINARIOS REALES
+# -----------------------------------------------------------------------------
+Write-Host "`n[5/5] Generando paquete ZIP de validación con binarios y scripts..." -ForegroundColor Yellow
+
+$ZipStaging = "$OutputPath\_zip_staging"
+if (Test-Path $ZipStaging) { Remove-Item -Recurse -Force $ZipStaging }
+New-Item -ItemType Directory -Path "$ZipStaging\bin" -Force | Out-Null
+
+# Copiar scripts de instalación
+$SetupFiles = @(
+    "AssetSchool-Student-Setup.cmd",
+    "install-student.ps1",
+    "uninstall-student.ps1",
+    "AssetSchool.Student.wxs",
+    "student-config.sample.json",
+    "README_INSTALACION_WINDOWS11.txt"
+)
+
+foreach ($sf in $SetupFiles) {
+    $sfPath = Join-Path $OutputPath $sf
+    if (-not (Test-Path $sfPath)) {
+        # Buscar en carpeta student
+        $sfPath = Join-Path $PSScriptRoot $sf
+    }
+    if (Test-Path $sfPath) {
+        Copy-Item -Path $sfPath -Destination $ZipStaging -Force
+        Write-Host "  ✓ Incluido archivo de configuración: $sf" -ForegroundColor DarkGray
+    } else {
+        Write-Warning "Archivo de configuración no encontrado: $sf"
+    }
+}
+
+# Copiar binarios y dependencias al subdirectorio 'bin\' y ejecutables a la raíz
+Copy-Item -Path "$PublishDir\*" -Destination "$ZipStaging\bin\" -Recurse -Force
+Copy-Item -Path $FinalServiceExe -Destination $ZipStaging -Force
+Copy-Item -Path $FinalSessionExe -Destination $ZipStaging -Force
+
+# Generar archivo ZIP final
+$ZipOutputFile = "$OutputPath\AssetSchool-Student-v1.2.0-Win11-Validation.zip"
+if (Test-Path $ZipOutputFile) { Remove-Item -Force $ZipOutputFile }
+
+Compress-Archive -Path "$ZipStaging\*" -DestinationPath $ZipOutputFile -CompressionLevel Optimal
+Remove-Item -Recurse -Force $ZipStaging
+
+$zipInfo = Get-Item $ZipOutputFile
+$zipHash = (Get-FileHash -Path $ZipOutputFile -Algorithm SHA256).Hash
+
+Write-Host "`n======================================================================" -ForegroundColor Green
+Write-Host "   COMPILACIÓN Y EMPAQUETADO COMPLETADOS EXITOSAMENTE                " -ForegroundColor Green
+Write-Host "   Directorio Binarios: $PublishDir" -ForegroundColor Green
+Write-Host "   Service Exe:         AssetSchool.Student.Service.exe (SHA: $($hashService.Substring(0,16))...)" -ForegroundColor Green
+Write-Host "   SessionAgent Exe:    AssetSchool.Student.SessionAgent.exe (SHA: $($hashSession.Substring(0,16))...)" -ForegroundColor Green
+Write-Host "   Paquete ZIP:         $ZipOutputFile ($([math]::Round($zipInfo.Length / 1MB, 2)) MB)" -ForegroundColor Green
+Write-Host "   SHA-256 ZIP:         $zipHash" -ForegroundColor Green
+Write-Host "======================================================================" -ForegroundColor Green

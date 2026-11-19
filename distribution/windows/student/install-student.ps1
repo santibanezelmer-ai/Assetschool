@@ -148,10 +148,21 @@ foreach ($binName in $RequiredBinaries) {
 # -----------------------------------------------------------------------------
 # 3. PREPARACIÓN DE DIRECTORIOS Y COPIA DE ARCHIVOS VERIFICADOS
 # -----------------------------------------------------------------------------
-Write-Host "`n[3/7] Desplegando binarios verificados en $InstallDir..." -ForegroundColor Yellow
+Write-Host "`n[3/7] Desplegando binarios verificados y dependencias en $InstallDir..." -ForegroundColor Yellow
 if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 if (-not (Test-Path "$DataDir\logs")) { New-Item -ItemType Directory -Path "$DataDir\logs" -Force | Out-Null }
+
+# Copiar dependencias de runtime (.dll, .json runtimeconfig, .pdb) desde los directorios de origen
+$sourceDirs = $ResolvedBinaries.Values | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique
+foreach ($sDir in $sourceDirs) {
+    if ($sDir -ne $InstallDir -and (Test-Path $sDir)) {
+        Get-ChildItem -Path $sDir -File | Where-Object { $_.Extension -in @(".dll", ".json", ".pdb", ".node") -and $_.Name -ne "student-config.json" } | ForEach-Object {
+            $destFile = Join-Path $InstallDir $_.Name
+            Copy-Item -Path $_.FullName -Destination $destFile -Force
+        }
+    }
+}
 
 foreach ($binName in $RequiredBinaries) {
     $src = $ResolvedBinaries[$binName]
@@ -159,6 +170,8 @@ foreach ($binName in $RequiredBinaries) {
     if ($src -ne $dest) {
         Copy-Item -Path $src -Destination $dest -Force
         Write-Host "  ✓ Copiado: $binName -> $dest" -ForegroundColor Green
+    } else {
+        Write-Host "  ✓ Presente: $binName en $dest" -ForegroundColor Green
     }
 }
 
