@@ -82,18 +82,11 @@
                         Wait="yes" />
       </Component>
 
-      <!-- 2. Interactive Session Agent (Runs inside active Windows Desktop sessions) -->
+      <!-- 2. Interactive Session Agent (Supervisado y lanzado exclusivamente por Windows Service via CreateProcessAsUser) -->
       <Component Id="cmp_SessionAgent" Guid="7E57C003-57D1-4E88-B391-7C65F8E21003" Directory="SessionAgentFolder" Win64="yes">
         <File Id="fil_SessionAgentExe" 
               Source="$(var.PublishDir)\SessionAgent\AssetSchool.Student.SessionAgent.exe" 
               KeyPath="yes" />
-
-        <!-- Run Key to ensure interactive agent launches in logged-in user desktop sessions -->
-        <RegistryValue Root="HKLM" 
-                       Key="Software\Microsoft\Windows\CurrentVersion\Run" 
-                       Name="AssetSchoolStudentSessionAgent" 
-                       Type="string" 
-                       Value="&quot;[SessionAgentFolder]AssetSchool.Student.SessionAgent.exe&quot; --autostart" />
       </Component>
 
       <!-- 3. Local Firewall Rules for SFU WebRTC and Agent Signaling -->

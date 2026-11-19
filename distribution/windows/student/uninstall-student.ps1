@@ -33,11 +33,11 @@ Start-Sleep -Seconds 2
 sc.exe delete $ServiceName | Out-Null
 Write-Host "  ✓ Servicio Windows desregistrado y procesos finalizados." -ForegroundColor Green
 
-# 2. Eliminar clave de inicio Run
-Write-Host "[2/4] Removiendo clave de inicio de SessionAgent..." -ForegroundColor Yellow
+# 2. Eliminar clave de inicio Run (en caso de remanentes de versiones anteriores)
+Write-Host "[2/4] Verificando y removiendo clave legacy HKLM Run de SessionAgent..." -ForegroundColor Yellow
 $runKeyPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
 Remove-ItemProperty -Path $runKeyPath -Name "AssetSchoolStudentSessionAgent" -ErrorAction SilentlyContinue
-Write-Host "  ✓ Clave de registro removida." -ForegroundColor Green
+Write-Host "  ✓ Clave legacy de registro verificada/removida." -ForegroundColor Green
 
 # 3. Eliminar reglas de firewall
 Write-Host "[3/4] Eliminando reglas de Windows Firewall..." -ForegroundColor Yellow

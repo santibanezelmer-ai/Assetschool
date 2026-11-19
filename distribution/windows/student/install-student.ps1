@@ -304,13 +304,16 @@ sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/res
 Write-Host "  ✓ Servicio '$ServiceName' registrado con arranque automático y autorrecuperación nativa." -ForegroundColor Green
 Write-Host "    Ruta binaria SCM: $serviceExePath" -ForegroundColor DarkGray
 
-# Configurar SessionAgent en el inicio de sesiones interactivas de escritorio apuntando a su ruta segregada
-$sessionAgentExePath = Join-Path $SessionInstallDir "AssetSchool.Student.SessionAgent.exe"
+# Gestión Exclusiva del Ciclo de Vida: El Windows Service es la única autoridad responsable
+# de supervisar y lanzar SessionAgent en sesiones interactivas (vía WTSQueryUserToken y CreateProcessAsUser).
+# Se elimina cualquier registro previo en HKLM Run para evitar instancias duplicadas o competidoras.
 $runKeyPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runValueName = "AssetSchoolStudentSessionAgent"
-Set-ItemProperty -Path $runKeyPath -Name $runValueName -Value "`"$sessionAgentExePath`" --autostart" -Type String
-Write-Host "  ✓ SessionAgent registrado para inicio interactivo en sesiones de usuario." -ForegroundColor Green
-Write-Host "    Ruta binaria Run Key: `"$sessionAgentExePath`" --autostart" -ForegroundColor DarkGray
+if (Get-ItemProperty -Path $runKeyPath -Name $runValueName -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -Path $runKeyPath -Name $runValueName -ErrorAction SilentlyContinue
+    Write-Host "  ✓ Clave obsoleta HKLM Run removida para garantizar exclusividad del servicio." -ForegroundColor DarkGray
+}
+Write-Host "  ✓ Ciclo de vida de SessionAgent: Supervisión exclusiva delegada al servicio Windows (sin claves HKLM Run)." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 6. CONFIGURACIÓN AUDITADA DE WINDOWS FIREWALL (SOLO SENTIDO REAL Y RED PRIVADA)
