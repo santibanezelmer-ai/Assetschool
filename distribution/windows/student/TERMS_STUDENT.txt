@@ -1,0 +1,29 @@
+================================================================================
+          ASSETSCHOOL STUDENT — TÉRMINOS Y CONDICIONES DE USO INSTITUCIONAL
+================================================================================
+
+1. PROPÓSITO DEL SOFTWARE:
+AssetSchool Student es un componente nativo de supervisión pedagógica, interacción 
+multimedia y administración remota en el aula escolar, diseñado para ejecutarse 
+en estaciones de trabajo de estudiantes dentro de una red local (LAN) institucional.
+
+2. PRIVACIDAD Y ÁMBITO DE OPERACIÓN:
+- La supervisión de pantalla, recepción de emisiones docentes y control pedagógico 
+  operan exclusivamente durante las sesiones de clase activas dentro de la red local.
+- No se realiza transmisión de datos personales ni telemetría fuera de la 
+  infraestructura del establecimiento educativo.
+- La configuración y tokens de enrolamiento se almacenan con protección NTFS de 
+  nivel de sistema (acceso exclusivo para administradores y SYSTEM).
+
+3. COMPATIBILIDAD Y SEGURIDAD:
+- Este componente se instala como servicio residente del sistema operativo Windows 11 / 10 
+  de 64 bits (x64) y se integra nativamente con el Service Control Manager (SCM).
+- Las reglas de firewall se limitan estrictamente a la comunicación privada de la red escolar.
+
+4. DERECHOS DE PROPIEDAD:
+AssetSchool es un software propietario comercial. Queda prohibida su descompilación, 
+modificación o redistribución no autorizada fuera del marco institucional autorizado.
+
+Al continuar con la instalación, usted acepta las condiciones de operación pedagógica 
+y administración institucional de AssetSchool en este equipo.
+================================================================================
