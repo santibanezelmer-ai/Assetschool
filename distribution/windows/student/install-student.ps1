@@ -67,12 +67,19 @@ $RequiredExes = @("AssetSchool.Student.Service.exe", "AssetSchool.Student.Sessio
 foreach ($exe in $RequiredExes) {
     $destFile = Join-Path $InstallDir $exe
     if (-not (Test-Path $destFile)) {
-        $srcFile = Join-Path $SourcePublishDir $exe
-        if (Test-Path $srcFile) {
-            Copy-Item -Path $srcFile -Destination $destFile -Force
-            Write-Host "  ✓ Copiado $exe desde origen de publicación." -ForegroundColor Green
+        # Buscar en: 1) misma carpeta del script, 2) subcarpeta 'bin', 3) árbol de compilación del repo
+        $candidateSources = @(
+            (Join-Path $PSScriptRoot $exe),
+            (Join-Path $PSScriptRoot "bin\$exe"),
+            (Join-Path $SourcePublishDir $exe)
+        )
+        $foundSource = $candidateSources | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+        if ($foundSource) {
+            Copy-Item -Path $foundSource -Destination $destFile -Force
+            Write-Host "  ✓ Copiado $exe desde '$foundSource'." -ForegroundColor Green
         } else {
-            Write-Warning "Archivo $destFile no encontrado en el destino ni en $srcFile."
+            Write-Warning "Archivo $destFile no encontrado en el destino ni en las rutas de origen ($PSScriptRoot)."
         }
     } else {
         Write-Host "  ✓ $exe verificado en $InstallDir." -ForegroundColor Green
