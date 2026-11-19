@@ -1,17 +1,18 @@
 ﻿<#
 .SYNOPSIS
-    Script de compilación, ensamblado sin colisiones y empaquetado de AssetSchool Student Windows.
+    Script de compilación, segregación arquitectónica y empaquetado de AssetSchool Student Windows.
 .DESCRIPTION
     1. Compila en modo Release autocontenido (win-x64) AssetSchool.Student.Service y
-       AssetSchool.Student.SessionAgent en directorios temporales aislados para evitar sobrescrituras.
-    2. Valida byte a byte la integridad de ambos ejecutables (cabeceras DOS MZ, PE\0\0, arquitectura AMD64).
-    3. Falla inmediatamente si falta algún ejecutable o si no es un binario PE x64 válido.
-    4. Ensambla de forma controlada todos los artefactos (.exe, DLLs administradas, DLLs nativas,
-       archivos .dat, runtimeconfig, deps y subcarpetas) en dist/bin/student-windows,
-       resolviendo colisiones mediante priorización de versión mayor o más reciente.
-    5. Intenta generar el paquete MSI con WiX Toolset; si WiX no está disponible, informa claramente
+       AssetSchool.Student.SessionAgent en directorios segregados e independientes:
+       dist/bin/student-windows/Service y dist/bin/student-windows/SessionAgent.
+    2. Elimina cualquier fusión o resolución artificial de colisiones entre dependencias autocontenidas.
+    3. Valida byte a byte la integridad de ambos ejecutables (cabeceras DOS MZ, PE\0\0, arquitectura AMD64).
+    4. Falla inmediatamente si falta algún ejecutable o si no es un binario PE x64 válido.
+    5. Preserva el 100% de los archivos generados por dotnet publish (.exe, DLLs administradas, DLLs nativas,
+       archivos .dat, runtimeconfig, deps y subdirectorios).
+    6. Intenta generar el paquete MSI con WiX Toolset; si WiX no está disponible, informa claramente
        que el MSI no se ha generado (sin recurrir a archivos simulados).
-    6. Genera el paquete ZIP de validación con la distribución completa preservada.
+    7. Genera el paquete ZIP de validación con la distribución segregada preservada.
 #>
 param(
     [string]$Configuration = "Release",
@@ -43,14 +44,13 @@ if (-not (Test-Path $ServiceProject)) { throw "Proyecto no encontrado: $ServiceP
 if (-not (Test-Path $SessionProject)) { throw "Proyecto no encontrado: $SessionProject" }
 
 $PublishDir = "$RepoRoot\dist\bin\student-windows"
-$TempBase = "$RepoRoot\dist\bin\_build_staging"
-$TempServiceDir = "$TempBase\service"
-$TempSessionDir = "$TempBase\sessionagent"
+$ServicePublishDir = Join-Path $PublishDir "Service"
+$SessionPublishDir = Join-Path $PublishDir "SessionAgent"
 
-# Limpiar directorios de compilación previa
-if (Test-Path $TempBase) { Remove-Item -Recurse -Force $TempBase }
-New-Item -ItemType Directory -Path $TempServiceDir -Force | Out-Null
-New-Item -ItemType Directory -Path $TempSessionDir -Force | Out-Null
+# Limpiar directorios de publicación previa
+if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
+New-Item -ItemType Directory -Path $ServicePublishDir -Force | Out-Null
+New-Item -ItemType Directory -Path $SessionPublishDir -Force | Out-Null
 
 # -----------------------------------------------------------------------------
 # 1. FUNCIÓN DE VALIDACIÓN BINARIA ESTRICTA (PE x64 / AMD64)
@@ -106,128 +106,72 @@ function Test-ValidPeX64Binary {
 }
 
 # -----------------------------------------------------------------------------
-# 2. PUBLICACIÓN AISLADA DE AMBOS PROYECTOS (PREVIENE SOBRESCRITURAS)
+# 2. PUBLICACIÓN SEGREGADA DE AMBOS PROYECTOS (ARQUITECTURA AISLADA)
 # -----------------------------------------------------------------------------
-Write-Host "`n[1/5] Publicando proyectos C# en directorios temporales aislados..." -ForegroundColor Yellow
+Write-Host "`n[1/5] Publicando proyectos C# en directorios segregados e independientes..." -ForegroundColor Yellow
 
 # A. Publicar AssetSchool.Student.Service
 Write-Host "  -> Compilando AssetSchool.Student.Service ($Configuration, $Runtime, self-contained)..." -ForegroundColor DarkGray
-& dotnet publish $ServiceProject -c $Configuration -r $Runtime --self-contained true -o $TempServiceDir
+& dotnet publish $ServiceProject -c $Configuration -r $Runtime --self-contained true -o $ServicePublishDir
 if ($LASTEXITCODE -ne 0) {
     throw "COMPILACIÓN FALLIDA: Fallo al publicar AssetSchool.Student.Service. Código de salida: $LASTEXITCODE"
 }
 
 # B. Publicar AssetSchool.Student.SessionAgent
 Write-Host "  -> Compilando AssetSchool.Student.SessionAgent ($Configuration, $Runtime, self-contained)..." -ForegroundColor DarkGray
-& dotnet publish $SessionProject -c $Configuration -r $Runtime --self-contained true -o $TempSessionDir
+& dotnet publish $SessionProject -c $Configuration -r $Runtime --self-contained true -o $SessionPublishDir
 if ($LASTEXITCODE -ne 0) {
     throw "COMPILACIÓN FALLIDA: Fallo al publicar AssetSchool.Student.SessionAgent. Código de salida: $LASTEXITCODE"
 }
 
 # -----------------------------------------------------------------------------
-# 3. VALIDACIÓN ESTRICTA DE EJECUTABLES GENERADOS EN STAGING
+# 3. VALIDACIÓN ESTRICTA DE EJECUTABLES (PE x64 / AMD64 Y SHA-256)
 # -----------------------------------------------------------------------------
 Write-Host "`n[2/5] Validando cabeceras PE, arquitectura AMD64 y firmas SHA-256..." -ForegroundColor Yellow
 
-$ServiceExeStaged = Join-Path $TempServiceDir "AssetSchool.Student.Service.exe"
-$SessionExeStaged = Join-Path $TempSessionDir "AssetSchool.Student.SessionAgent.exe"
+$FinalServiceExe = Join-Path $ServicePublishDir "AssetSchool.Student.Service.exe"
+$FinalSessionExe = Join-Path $SessionPublishDir "AssetSchool.Student.SessionAgent.exe"
 
-$checkService = Test-ValidPeX64Binary -FilePath $ServiceExeStaged
+$checkService = Test-ValidPeX64Binary -FilePath $FinalServiceExe
 if (-not $checkService.Valid) {
     throw "ERROR CRÍTICO: AssetSchool.Student.Service.exe no superó la validación. Motivo: $($checkService.Reason)"
 }
-$hashService = (Get-FileHash -Path $ServiceExeStaged -Algorithm SHA256).Hash
+$hashService = (Get-FileHash -Path $FinalServiceExe -Algorithm SHA256).Hash
 Write-Host "  ✓ AssetSchool.Student.Service.exe válido [$($checkService.Machine), $($checkService.SizeBytes) bytes]" -ForegroundColor Green
+Write-Host "    Ruta:    $FinalServiceExe" -ForegroundColor DarkGray
 Write-Host "    SHA-256: $hashService" -ForegroundColor DarkGray
 
-$checkSession = Test-ValidPeX64Binary -FilePath $SessionExeStaged
+$checkSession = Test-ValidPeX64Binary -FilePath $FinalSessionExe
 if (-not $checkSession.Valid) {
     throw "ERROR CRÍTICO: AssetSchool.Student.SessionAgent.exe no superó la validación. Motivo: $($checkSession.Reason)"
 }
-$hashSession = (Get-FileHash -Path $SessionExeStaged -Algorithm SHA256).Hash
+$hashSession = (Get-FileHash -Path $FinalSessionExe -Algorithm SHA256).Hash
 Write-Host "  ✓ AssetSchool.Student.SessionAgent.exe válido [$($checkSession.Machine), $($checkSession.SizeBytes) bytes]" -ForegroundColor Green
+Write-Host "    Ruta:    $FinalSessionExe" -ForegroundColor DarkGray
 Write-Host "    SHA-256: $hashSession" -ForegroundColor DarkGray
 
 # -----------------------------------------------------------------------------
-# 4. ENSAMBLADO UNIFICADO SIN COLISIONES EN dist/bin/student-windows
+# 4. AUDITORÍA DE DEPENDENCIAS DE RUNTIME .NET 8 AUTOCONTENIDO
 # -----------------------------------------------------------------------------
-Write-Host "`n[3/5] Ensamblando binarios, runtime .NET, archivos .dat y dependencias nativas..." -ForegroundColor Yellow
+Write-Host "`n[3/5] Auditando componentes de runtime .NET 8 autocontenidos en cada directorio..." -ForegroundColor Yellow
 
-if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
-New-Item -ItemType Directory -Path $PublishDir -Force | Out-Null
-
-function Merge-PublishedDirectories {
-    param(
-        [string[]]$SourceDirs,
-        [string]$TargetDir
-    )
-    $collisionCount = 0
-
-    foreach ($srcDir in $SourceDirs) {
-        if (-not (Test-Path $srcDir)) { continue }
-        Get-ChildItem -Path $srcDir -Recurse | ForEach-Object {
-            $relPath = [System.IO.Path]::GetRelativePath($srcDir, $_.FullName)
-            $destPath = Join-Path $TargetDir $relPath
-
-            if ($_.PSIsContainer) {
-                if (-not (Test-Path $destPath)) {
-                    New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-                }
-            } else {
-                if (-not (Test-Path $destPath)) {
-                    Copy-Item -Path $_.FullName -Destination $destPath -Force
-                } else {
-                    $collisionCount++
-                    $srcInfo = Get-Item $_.FullName
-                    $destInfo = Get-Item $destPath
-
-                    # Comparar versión de ensamblado para DLLs / EXEs
-                    $srcVer = (Get-ItemProperty $_.FullName -ErrorAction SilentlyContinue).VersionInfo.FileVersion
-                    $destVer = (Get-ItemProperty $destPath -ErrorAction SilentlyContinue).VersionInfo.FileVersion
-
-                    if ($srcVer -and $destVer -and ($srcVer -gt $destVer)) {
-                        Copy-Item -Path $_.FullName -Destination $destPath -Force
-                        Write-Host "    [Colisión Resuelta] $relPath actualizado a versión mayor ($srcVer > $destVer)" -ForegroundColor DarkGray
-                    } elseif ($srcInfo.LastWriteTimeUtc -gt $destInfo.LastWriteTimeUtc -and -not ($srcVer -and $destVer)) {
-                        Copy-Item -Path $_.FullName -Destination $destPath -Force
-                        Write-Host "    [Colisión Resuelta] $relPath actualizado por marca de tiempo más reciente" -ForegroundColor DarkGray
-                    } else {
-                        # Mantener el existente (versión mayor o idéntica)
-                    }
-                }
-            }
+$CriticalRuntimeFiles = @("coreclr.dll", "hostfxr.dll", "hostpolicy.dll")
+foreach ($comp in @(@{ Name = "Service"; Dir = $ServicePublishDir }, @{ Name = "SessionAgent"; Dir = $SessionPublishDir })) {
+    Write-Host "  -> Verificando $($comp.Name) ($($comp.Dir))..." -ForegroundColor DarkGray
+    $dirFiles = (Get-ChildItem -Path $comp.Dir -Recurse -File).Count
+    Write-Host "     Total de archivos: $dirFiles" -ForegroundColor DarkGray
+    foreach ($crf in $CriticalRuntimeFiles) {
+        $crfPath = Join-Path $comp.Dir $crf
+        if (Test-Path $crfPath) {
+            Write-Host "     ✓ Componente runtime preservado: $crf" -ForegroundColor DarkGray
+        } else {
+            Write-Warning "Componente runtime no encontrado en $($comp.Name): $crf"
         }
-    }
-    return $collisionCount
-}
-
-$collisionsResolved = Merge-PublishedDirectories -SourceDirs @($TempServiceDir, $TempSessionDir) -TargetDir $PublishDir
-Write-Host "  ✓ Ensamblado completado ($collisionsResolved colisiones de runtime resueltas con preservación de versión mayor)." -ForegroundColor Green
-
-# Limpiar staging temporal
-Remove-Item -Recurse -Force $TempBase
-
-# Confirmar presencia final de ambos binarios y componentes clave en PublishDir
-$FinalServiceExe = Join-Path $PublishDir "AssetSchool.Student.Service.exe"
-$FinalSessionExe = Join-Path $PublishDir "AssetSchool.Student.SessionAgent.exe"
-
-if (-not (Test-Path $FinalServiceExe) -or -not (Test-Path $FinalSessionExe)) {
-    throw "ERROR CRÍTICO: Fallo al ensamblar los ejecutables en $PublishDir."
-}
-
-# Auditar presencia de componentes esenciales de runtime .NET 8 autocontenido
-$CriticalRuntimeFiles = @("coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "icudt.dat")
-foreach ($crf in $CriticalRuntimeFiles) {
-    $crfPath = Join-Path $PublishDir $crf
-    if (Test-Path $crfPath) {
-        Write-Host "  ✓ Componente runtime preservado: $crf" -ForegroundColor DarkGray
-    } else {
-        Write-Warning "Componente runtime no encontrado en la raíz de publicación: $crf (verifique si fue empaquetado como SingleFile)."
     }
 }
 
 $totalPublishedFiles = (Get-ChildItem -Path $PublishDir -Recurse -File).Count
-Write-Host "  ✓ Total de archivos ensamblados en $PublishDir: $totalPublishedFiles archivos." -ForegroundColor Green
+Write-Host "  ✓ Estructura segregada lista en $PublishDir ($totalPublishedFiles archivos en total, sin colisiones ni sobreescrituras)." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 5. GENERACIÓN DEL PAQUETE MSI (WIX TOOLSET)
@@ -309,12 +253,9 @@ foreach ($sf in $SetupFiles) {
     }
 }
 
-# Copiar la totalidad de binarios, DLLs nativas, .dat, configs y subcarpetas al directorio 'bin\'
-Copy-Item -Path "$PublishDir\*" -Destination "$ZipStaging\bin\" -Recurse -Force
-
-# Colocar también los dos ejecutables en la raíz para máxima compatibilidad
-Copy-Item -Path $FinalServiceExe -Destination $ZipStaging -Force
-Copy-Item -Path $FinalSessionExe -Destination $ZipStaging -Force
+# Copiar árboles segregados completos de publicación al subdirectorio 'bin\'
+Copy-Item -Path $ServicePublishDir -Destination "$ZipStaging\bin\Service" -Recurse -Force
+Copy-Item -Path $SessionPublishDir -Destination "$ZipStaging\bin\SessionAgent" -Recurse -Force
 
 # Generar archivo ZIP final
 $ZipOutputFile = "$OutputPath\AssetSchool-Student-v1.2.0-Win11-Validation.zip"

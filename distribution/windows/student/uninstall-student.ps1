@@ -24,12 +24,14 @@ Write-Host "====================================================================
 Write-Host "   ASSETSCHOOL — DESINSTALACIÓN DE STUDENT WINDOWS                    " -ForegroundColor Yellow
 Write-Host "======================================================================" -ForegroundColor Yellow
 
-# 1. Detener y eliminar servicio Windows
-Write-Host "[1/4] Deteniendo y eliminando servicio Windows '$ServiceName'..." -ForegroundColor Yellow
-Stop-Service -Name $ServiceName -Force
+# 1. Detener y eliminar servicio Windows y procesos activos
+Write-Host "[1/4] Deteniendo servicio Windows y procesos de agente..." -ForegroundColor Yellow
+Stop-Service -Name $ServiceName -Force -ErrorAction SilentlyContinue
+Get-Process -Name "AssetSchool.Student.SessionAgent" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "AssetSchool.Student.Service" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 sc.exe delete $ServiceName | Out-Null
-Write-Host "  ✓ Servicio Windows desregistrado." -ForegroundColor Green
+Write-Host "  ✓ Servicio Windows desregistrado y procesos finalizados." -ForegroundColor Green
 
 # 2. Eliminar clave de inicio Run
 Write-Host "[2/4] Removiendo clave de inicio de SessionAgent..." -ForegroundColor Yellow

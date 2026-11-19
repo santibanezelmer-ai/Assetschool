@@ -35,7 +35,8 @@
       <Directory Id="ProgramFiles64Folder">
         <Directory Id="AssetSchoolFolder" Name="AssetSchool">
           <Directory Id="INSTALLFOLDER" Name="Student">
-            <Directory Id="BinFolder" Name="bin" />
+            <Directory Id="ServiceFolder" Name="Service" />
+            <Directory Id="SessionAgentFolder" Name="SessionAgent" />
           </Directory>
         </Directory>
       </Directory>
@@ -51,9 +52,9 @@
     <!-- Component Group: Windows Service & Session Agent -->
     <ComponentGroup Id="StudentComponents" Directory="INSTALLFOLDER">
       <!-- 1. Background Windows Service (Runs as LocalSystem) -->
-      <Component Id="cmp_StudentService" Guid="7E57C002-57D1-4E88-B391-7C65F8E21002" Win64="yes">
+      <Component Id="cmp_StudentService" Guid="7E57C002-57D1-4E88-B391-7C65F8E21002" Directory="ServiceFolder" Win64="yes">
         <File Id="fil_StudentServiceExe" 
-              Source="$(var.PublishDir)\AssetSchool.Student.Service.exe" 
+              Source="$(var.PublishDir)\Service\AssetSchool.Student.Service.exe" 
               KeyPath="yes" />
 
         <ServiceInstall Id="srv_StudentService"
@@ -82,9 +83,9 @@
       </Component>
 
       <!-- 2. Interactive Session Agent (Runs inside active Windows Desktop sessions) -->
-      <Component Id="cmp_SessionAgent" Guid="7E57C003-57D1-4E88-B391-7C65F8E21003" Win64="yes">
+      <Component Id="cmp_SessionAgent" Guid="7E57C003-57D1-4E88-B391-7C65F8E21003" Directory="SessionAgentFolder" Win64="yes">
         <File Id="fil_SessionAgentExe" 
-              Source="$(var.PublishDir)\AssetSchool.Student.SessionAgent.exe" 
+              Source="$(var.PublishDir)\SessionAgent\AssetSchool.Student.SessionAgent.exe" 
               KeyPath="yes" />
 
         <!-- Run Key to ensure interactive agent launches in logged-in user desktop sessions -->
@@ -92,7 +93,7 @@
                        Key="Software\Microsoft\Windows\CurrentVersion\Run" 
                        Name="AssetSchoolStudentSessionAgent" 
                        Type="string" 
-                       Value="&quot;[INSTALLFOLDER]AssetSchool.Student.SessionAgent.exe&quot; --autostart" />
+                       Value="&quot;[SessionAgentFolder]AssetSchool.Student.SessionAgent.exe&quot; --autostart" />
       </Component>
 
       <!-- 3. Local Firewall Rules for SFU WebRTC and Agent Signaling -->

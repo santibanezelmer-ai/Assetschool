@@ -118,88 +118,111 @@ function Test-ValidPeX64Binary {
     }
 }
 
-$RequiredBinaries = @("AssetSchool.Student.Service.exe", "AssetSchool.Student.SessionAgent.exe")
-
-# Candidatos a directorio contenedor de binarios (orden de prioridad):
-$CandidateBinaryDirs = @(
+# Candidatos a directorio contenedor base de binarios (orden de prioridad):
+$CandidateRoots = @(
     (Join-Path $PSScriptRoot "bin"),                                                                 # Subdirectorio bin en paquete ZIP
     $PSScriptRoot,                                                                                  # Mismo directorio del script
     (Resolve-Path "$PSScriptRoot\..\..\..\dist\bin\student-windows" -ErrorAction SilentlyContinue),  # Árbol del repositorio
     $InstallDir                                                                                     # Directorio destino preexistente
 ) | Where-Object { $_ -and (Test-Path $_) }
 
-$BinarySourceDir = $null
-foreach ($cDir in $CandidateBinaryDirs) {
-    $hasService = Test-Path (Join-Path $cDir "AssetSchool.Student.Service.exe")
-    $hasSession = Test-Path (Join-Path $cDir "AssetSchool.Student.SessionAgent.exe")
-    if ($hasService -and $hasSession) {
-        $BinarySourceDir = $cDir
+$ServiceSourceDir = $null
+$SessionSourceDir = $null
+
+foreach ($cRoot in $CandidateRoots) {
+    $svcPath = Join-Path $cRoot "Service\AssetSchool.Student.Service.exe"
+    $sessPath = Join-Path $cRoot "SessionAgent\AssetSchool.Student.SessionAgent.exe"
+    if ((Test-Path $svcPath) -and (Test-Path $sessPath)) {
+        $ServiceSourceDir = Join-Path $cRoot "Service"
+        $SessionSourceDir = Join-Path $cRoot "SessionAgent"
         break
     }
 }
 
-if (-not $BinarySourceDir) {
-    throw "INSTALACIÓN ABORTADA POR SEGURIDAD: No se encontró ningún directorio fuente que contenga ambos ejecutables requeridos (AssetSchool.Student.Service.exe y AssetSchool.Student.SessionAgent.exe). Rutas examinadas: $($CandidateBinaryDirs -join '; ')"
+if (-not $ServiceSourceDir -or -not $SessionSourceDir) {
+    throw "INSTALACIÓN ABORTADA POR SEGURIDAD: No se encontraron los directorios fuente segregados 'Service' y 'SessionAgent'. Se requiere que existan 'Service\AssetSchool.Student.Service.exe' y 'SessionAgent\AssetSchool.Student.SessionAgent.exe'. Rutas base examinadas: $($CandidateRoots -join '; ')"
 }
 
-Write-Host "  ✓ Directorio fuente de distribución localizado: $BinarySourceDir" -ForegroundColor Green
+Write-Host "  ✓ Directorio fuente Service localizado:      $ServiceSourceDir" -ForegroundColor Green
+Write-Host "  ✓ Directorio fuente SessionAgent localizado: $SessionSourceDir" -ForegroundColor Green
 
-# Validar ambos ejecutables en el directorio fuente
-$ResolvedBinaries = @{}
-foreach ($binName in $RequiredBinaries) {
-    $binPath = Join-Path $BinarySourceDir $binName
-    $peCheck = Test-ValidPeX64Binary -FilePath $binPath
-    if (-not $peCheck.Valid) {
-        throw "INSTALACIÓN ABORTADA POR SEGURIDAD: El binario '$binPath' no es un ejecutable PE x64 válido. Motivo: $($peCheck.Reason)"
-    }
-    $hash = (Get-FileHash -Path $binPath -Algorithm SHA256).Hash
-    Write-Host "  ✓ $binName verificado: formato PE $($peCheck.Machine) [$($peCheck.SizeBytes) bytes], SHA-256: $($hash.Substring(0,16))..." -ForegroundColor Green
-    $ResolvedBinaries[$binName] = $binPath
+# Validar ambos ejecutables en sus directorios fuente
+$ServiceSourceExe = Join-Path $ServiceSourceDir "AssetSchool.Student.Service.exe"
+$SessionSourceExe = Join-Path $SessionSourceDir "AssetSchool.Student.SessionAgent.exe"
+
+$checkService = Test-ValidPeX64Binary -FilePath $ServiceSourceExe
+if (-not $checkService.Valid) {
+    throw "INSTALACIÓN ABORTADA POR SEGURIDAD: El binario '$ServiceSourceExe' no es un ejecutable PE x64 válido. Motivo: $($checkService.Reason)"
 }
+$hashService = (Get-FileHash -Path $ServiceSourceExe -Algorithm SHA256).Hash
+Write-Host "  ✓ AssetSchool.Student.Service.exe verificado: formato PE $($checkService.Machine) [$($checkService.SizeBytes) bytes], SHA-256: $($hashService.Substring(0,16))..." -ForegroundColor Green
+
+$checkSession = Test-ValidPeX64Binary -FilePath $SessionSourceExe
+if (-not $checkSession.Valid) {
+    throw "INSTALACIÓN ABORTADA POR SEGURIDAD: El binario '$SessionSourceExe' no es un ejecutable PE x64 válido. Motivo: $($checkSession.Reason)"
+}
+$hashSession = (Get-FileHash -Path $SessionSourceExe -Algorithm SHA256).Hash
+Write-Host "  ✓ AssetSchool.Student.SessionAgent.exe verificado: formato PE $($checkSession.Machine) [$($checkSession.SizeBytes) bytes], SHA-256: $($hashSession.Substring(0,16))..." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
-# 3. PREPARACIÓN DE DIRECTORIOS Y COPIA DE LA DISTRIBUCIÓN COMPLETA
+# 3. PREPARACIÓN DE DIRECTORIOS Y COPIA DE LA DISTRIBUCIÓN SEGREGADA
 # -----------------------------------------------------------------------------
-Write-Host "`n[3/7] Desplegando distribución completa en $InstallDir..." -ForegroundColor Yellow
+Write-Host "`n[3/7] Desplegando distribución segregada en $InstallDir..." -ForegroundColor Yellow
+
+$ServiceInstallDir = Join-Path $InstallDir "Service"
+$SessionInstallDir = Join-Path $InstallDir "SessionAgent"
+
 if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
+if (-not (Test-Path $ServiceInstallDir)) { New-Item -ItemType Directory -Path $ServiceInstallDir -Force | Out-Null }
+if (-not (Test-Path $SessionInstallDir)) { New-Item -ItemType Directory -Path $SessionInstallDir -Force | Out-Null }
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 if (-not (Test-Path "$DataDir\logs")) { New-Item -ItemType Directory -Path "$DataDir\logs" -Force | Out-Null }
 
-# Si el directorio fuente es distinto al de instalación, copiar TODOS los archivos y subcarpetas sin filtrar extensiones
-if ((Resolve-Path $BinarySourceDir).Path -ne (Resolve-Path $InstallDir).Path) {
-    Write-Host "  -> Copiando todos los archivos desde $BinarySourceDir hacia $InstallDir (sin filtros de extensión)..." -ForegroundColor DarkGray
-    
-    Get-ChildItem -Path $BinarySourceDir -Recurse | ForEach-Object {
-        $relPath = [System.IO.Path]::GetRelativePath($BinarySourceDir, $_.FullName)
-        $destPath = Join-Path $InstallDir $relPath
-
+# Desplegar Service
+if ((Resolve-Path $ServiceSourceDir).Path -ne (Resolve-Path $ServiceInstallDir).Path) {
+    Write-Host "  -> Desplegando Service en $ServiceInstallDir (sin filtros de extensión)..." -ForegroundColor DarkGray
+    Get-ChildItem -Path $ServiceSourceDir -Recurse | ForEach-Object {
+        $relPath = [System.IO.Path]::GetRelativePath($ServiceSourceDir, $_.FullName)
+        $destPath = Join-Path $ServiceInstallDir $relPath
         if ($_.PSIsContainer) {
-            if (-not (Test-Path $destPath)) {
-                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
-            }
+            if (-not (Test-Path $destPath)) { New-Item -ItemType Directory -Path $destPath -Force | Out-Null }
         } else {
-            # Evitar sobreescribir student-config.json si existiera en la fuente
-            if ($_.Name -ne "student-config.json") {
-                Copy-Item -Path $_.FullName -Destination $destPath -Force
-            }
+            Copy-Item -Path $_.FullName -Destination $destPath -Force
         }
     }
 }
 
-# Verificación de integridad post-copia en InstallDir:
-foreach ($binName in $RequiredBinaries) {
-    $installedBin = Join-Path $InstallDir $binName
-    if (-not (Test-Path $installedBin)) {
-        throw "ERROR CRÍTICO: Fallo al desplegar $binName en $InstallDir."
-    }
-    $reCheck = Test-ValidPeX64Binary -FilePath $installedBin
-    if (-not $reCheck.Valid) {
-        throw "ERROR CRÍTICO: El binario desplegado en '$installedBin' quedó corrupto tras la copia."
+# Desplegar SessionAgent
+if ((Resolve-Path $SessionSourceDir).Path -ne (Resolve-Path $SessionInstallDir).Path) {
+    Write-Host "  -> Desplegando SessionAgent en $SessionInstallDir (sin filtros de extensión)..." -ForegroundColor DarkGray
+    Get-ChildItem -Path $SessionSourceDir -Recurse | ForEach-Object {
+        $relPath = [System.IO.Path]::GetRelativePath($SessionSourceDir, $_.FullName)
+        $destPath = Join-Path $SessionInstallDir $relPath
+        if ($_.PSIsContainer) {
+            if (-not (Test-Path $destPath)) { New-Item -ItemType Directory -Path $destPath -Force | Out-Null }
+        } else {
+            Copy-Item -Path $_.FullName -Destination $destPath -Force
+        }
     }
 }
 
-$deployedFilesCount = (Get-ChildItem -Path $InstallDir -Recurse -File).Count
-Write-Host "  ✓ Distribución completa desplegada en $InstallDir ($deployedFilesCount archivos preservados, incluyendo .dll, .dat, .json y dependencias nativas)." -ForegroundColor Green
+# Verificación de integridad post-copia en directorios instalados
+$installedServiceExe = Join-Path $ServiceInstallDir "AssetSchool.Student.Service.exe"
+$installedSessionExe = Join-Path $SessionInstallDir "AssetSchool.Student.SessionAgent.exe"
+
+$reCheckService = Test-ValidPeX64Binary -FilePath $installedServiceExe
+if (-not $reCheckService.Valid) {
+    throw "ERROR CRÍTICO: El binario desplegado en '$installedServiceExe' no es válido tras la copia."
+}
+$reCheckSession = Test-ValidPeX64Binary -FilePath $installedSessionExe
+if (-not $reCheckSession.Valid) {
+    throw "ERROR CRÍTICO: El binario desplegado en '$installedSessionExe' no es válido tras la copia."
+}
+
+$deployedServiceFiles = (Get-ChildItem -Path $ServiceInstallDir -Recurse -File).Count
+$deployedSessionFiles = (Get-ChildItem -Path $SessionInstallDir -Recurse -File).Count
+Write-Host "  ✓ Service desplegado en $ServiceInstallDir ($deployedServiceFiles archivos preservados)." -ForegroundColor Green
+Write-Host "  ✓ SessionAgent desplegado en $SessionInstallDir ($deployedSessionFiles archivos preservados)." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 4. PROTECCIÓN NTFS ESTRICTA DE CONFIGURACIÓN Y SECRETOS
@@ -256,7 +279,7 @@ if ($effectiveUrl -match "^https://" -or $effectiveUrl -match "^wss://") {
 # 5. REGISTRO EN WINDOWS SERVICE CONTROL MANAGER (SCM) CON AUTORRECUPERACIÓN
 # -----------------------------------------------------------------------------
 Write-Host "`n[5/7] Registrando servicio en Windows Service Control Manager (SCM)..." -ForegroundColor Yellow
-$serviceExePath = Join-Path $InstallDir "AssetSchool.Student.Service.exe"
+$serviceExePath = Join-Path $ServiceInstallDir "AssetSchool.Student.Service.exe"
 
 $existing = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
 if ($existing) {
@@ -267,7 +290,7 @@ if ($existing) {
     Start-Sleep -Seconds 2
 }
 
-# Registrar servicio nativo
+# Registrar servicio nativo apuntando a la ruta segregada
 $binPathArg = "`"$serviceExePath`""
 sc.exe create $ServiceName binPath= $binPathArg start= auto DisplayName= "$DisplayName"
 if ($LASTEXITCODE -ne 0) {
@@ -279,13 +302,15 @@ sc.exe description $ServiceName "Servicio residente de supervisión, administrac
 # Autorrecuperación nativa ante caídas inesperadas
 sc.exe failure $ServiceName reset= 86400 actions= restart/5000/restart/10000/restart/30000
 Write-Host "  ✓ Servicio '$ServiceName' registrado con arranque automático y autorrecuperación nativa." -ForegroundColor Green
+Write-Host "    Ruta binaria SCM: $serviceExePath" -ForegroundColor DarkGray
 
-# Configurar SessionAgent en el inicio de sesiones interactivas de escritorio
-$sessionAgentExePath = Join-Path $InstallDir "AssetSchool.Student.SessionAgent.exe"
+# Configurar SessionAgent en el inicio de sesiones interactivas de escritorio apuntando a su ruta segregada
+$sessionAgentExePath = Join-Path $SessionInstallDir "AssetSchool.Student.SessionAgent.exe"
 $runKeyPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runValueName = "AssetSchoolStudentSessionAgent"
 Set-ItemProperty -Path $runKeyPath -Name $runValueName -Value "`"$sessionAgentExePath`" --autostart" -Type String
 Write-Host "  ✓ SessionAgent registrado para inicio interactivo en sesiones de usuario." -ForegroundColor Green
+Write-Host "    Ruta binaria Run Key: `"$sessionAgentExePath`" --autostart" -ForegroundColor DarkGray
 
 # -----------------------------------------------------------------------------
 # 6. CONFIGURACIÓN AUDITADA DE WINDOWS FIREWALL (SOLO SENTIDO REAL Y RED PRIVADA)

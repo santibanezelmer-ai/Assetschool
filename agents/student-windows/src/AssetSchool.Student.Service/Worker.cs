@@ -121,7 +121,22 @@ public class Worker : BackgroundService
 
         // Multi-Session IPC Manager: handles dynamic sessions, fast user switching, and Session 0 isolation
         string currentDir = AppDomain.CurrentDomain.BaseDirectory;
-        string agentPath = Path.Combine(currentDir, "AssetSchool.Student.SessionAgent.exe");
+        // Primary architecture: Segregated directory structure (..\SessionAgent\AssetSchool.Student.SessionAgent.exe)
+        string agentPath = Path.GetFullPath(Path.Combine(currentDir, "..", "SessionAgent", "AssetSchool.Student.SessionAgent.exe"));
+        if (!File.Exists(agentPath))
+        {
+            // Fallbacks for flat directory layout or local debug build
+            string siblingPath = Path.Combine(currentDir, "AssetSchool.Student.SessionAgent.exe");
+            string subDirPath = Path.Combine(currentDir, "SessionAgent", "AssetSchool.Student.SessionAgent.exe");
+            if (File.Exists(siblingPath))
+            {
+                agentPath = siblingPath;
+            }
+            else if (File.Exists(subDirPath))
+            {
+                agentPath = subDirPath;
+            }
+        }
 
         _sessionIpcManager = new MultiSessionIpcManager(_logger, agentPath);
         _sessionIpcManager.OnMessageReceived += async (sessionId, msg) =>
