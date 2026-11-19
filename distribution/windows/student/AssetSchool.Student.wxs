@@ -21,7 +21,9 @@
     <MediaTemplate EmbedCab="yes" CompressionLevel="high"/>
 
     <!-- Configurable Public Properties for GPO / Intune / CLI Silent Deployment -->
-    <Property Id="SERVER_URL" Value="http://localhost:3000" />
+    <Property Id="SERVER_URL" Value="" />
+    <Property Id="SERVER_HOST" Value="192.168.4.42" />
+    <Property Id="SERVER_PORT" Value="3000" />
     <Property Id="INSTITUTION_ID" Value="" />
     <Property Id="CLASSROOM_ID" Value="" />
     <Property Id="ENROLLMENT_TOKEN" Value="" />
@@ -62,7 +64,14 @@
                         Start="auto"
                         ErrorControl="normal"
                         Account="LocalSystem"
-                        Vital="yes" />
+                        Vital="yes">
+          <ServiceConfig FailureActionsWhen="failedToStop"
+                         OnFirstFailure="restart"
+                         OnSecondFailure="restart"
+                         OnThirdFailure="restart"
+                         ResetPeriodInDays="1"
+                         RestartServiceDelayInSeconds="5" />
+        </ServiceInstall>
 
         <ServiceControl Id="ctl_StudentService"
                         Name="AssetSchoolStudentService"
@@ -120,16 +129,24 @@
       <ComponentGroupRef Id="ConfigComponents" />
     </Feature>
 
-    <!-- Custom Actions: Pass Properties to Config File on Silent Deployment -->
+    <!-- Custom Actions: Pass Properties to Config File on Silent Deployment & Configure Private Firewall -->
     <CustomAction Id="WriteConfigOnInstall" 
                   Directory="INSTALLFOLDER" 
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$cfg = @{ serverUrl='[SERVER_URL]'; institutionId='[INSTITUTION_ID]'; classroomId='[CLASSROOM_ID]'; enrollmentToken='[ENROLLMENT_TOKEN]' } | ConvertTo-Json; [IO.File]::WriteAllText('[DATAFOLDER]student-config.json', $cfg)&quot;" 
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$url = if ('[SERVER_URL]' -ne '') { '[SERVER_URL]' } else { 'http://[SERVER_HOST]:[SERVER_PORT]' }; $cfg = @{ serverUrl=$url; serverHost='[SERVER_HOST]'; serverPort=[int]'[SERVER_PORT]'; autoDiscovery=$true; institutionId='[INSTITUTION_ID]'; classroomId='[CLASSROOM_ID]'; enrollmentToken='[ENROLLMENT_TOKEN]' } | ConvertTo-Json; [IO.File]::WriteAllText('[DATAFOLDER]student-config.json', $cfg)&quot;" 
                   Execute="deferred" 
                   Return="ignore" 
                   Impersonate="no" />
 
+    <CustomAction Id="ConfigureFirewallOnInstall"
+                  Directory="INSTALLFOLDER"
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall add rule name='AssetSchool Student UDP Discovery' dir=in action=allow protocol=UDP localport=48500 profile=private enable=yes; netsh advfirewall firewall add rule name='AssetSchool Student SFU WebRTC' dir=in action=allow protocol=UDP localport=40000-40999 profile=private enable=yes; netsh advfirewall firewall add rule name='AssetSchool Student Outbound Signaling' dir=out action=allow protocol=TCP remoteport=[SERVER_PORT] profile=private enable=yes&quot;"
+                  Execute="deferred"
+                  Return="ignore"
+                  Impersonate="no" />
+
     <InstallExecuteSequence>
       <Custom Action="WriteConfigOnInstall" After="InstallFiles">NOT Installed</Custom>
+      <Custom Action="ConfigureFirewallOnInstall" After="WriteConfigOnInstall">NOT Installed</Custom>
     </InstallExecuteSequence>
 
   </Product>
