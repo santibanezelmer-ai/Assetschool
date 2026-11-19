@@ -1,15 +1,17 @@
 ﻿<#
 .SYNOPSIS
-    Script de compilación, validación PE x64 y empaquetado de AssetSchool Student Windows.
+    Script de compilación, ensamblado sin colisiones y empaquetado de AssetSchool Student Windows.
 .DESCRIPTION
     1. Compila en modo Release autocontenido (win-x64) AssetSchool.Student.Service y
        AssetSchool.Student.SessionAgent en directorios temporales aislados para evitar sobrescrituras.
     2. Valida byte a byte la integridad de ambos ejecutables (cabeceras DOS MZ, PE\0\0, arquitectura AMD64).
     3. Falla inmediatamente si falta algún ejecutable o si no es un binario PE x64 válido.
-    4. Ensambla los binarios y dependencias en dist/bin/student-windows.
+    4. Ensambla de forma controlada todos los artefactos (.exe, DLLs administradas, DLLs nativas,
+       archivos .dat, runtimeconfig, deps y subcarpetas) en dist/bin/student-windows,
+       resolviendo colisiones mediante priorización de versión mayor o más reciente.
     5. Intenta generar el paquete MSI con WiX Toolset; si WiX no está disponible, informa claramente
        que el MSI no se ha generado (sin recurrir a archivos simulados).
-    6. Genera o actualiza el paquete ZIP de validación con los ejecutables reales, dependencias y scripts.
+    6. Genera el paquete ZIP de validación con la distribución completa preservada.
 #>
 param(
     [string]$Configuration = "Release",
@@ -147,30 +149,85 @@ Write-Host "  ✓ AssetSchool.Student.SessionAgent.exe válido [$($checkSession.
 Write-Host "    SHA-256: $hashSession" -ForegroundColor DarkGray
 
 # -----------------------------------------------------------------------------
-# 4. ENSAMBLADO UNIFICADO EN dist/bin/student-windows
+# 4. ENSAMBLADO UNIFICADO SIN COLISIONES EN dist/bin/student-windows
 # -----------------------------------------------------------------------------
-Write-Host "`n[3/5] Ensamblando binarios y dependencias en $PublishDir..." -ForegroundColor Yellow
+Write-Host "`n[3/5] Ensamblando binarios, runtime .NET, archivos .dat y dependencias nativas..." -ForegroundColor Yellow
 
 if (Test-Path $PublishDir) { Remove-Item -Recurse -Force $PublishDir }
 New-Item -ItemType Directory -Path $PublishDir -Force | Out-Null
 
-# Copiar primero archivos del servicio
-Copy-Item -Path "$TempServiceDir\*" -Destination $PublishDir -Recurse -Force
+function Merge-PublishedDirectories {
+    param(
+        [string[]]$SourceDirs,
+        [string]$TargetDir
+    )
+    $collisionCount = 0
 
-# Copiar archivos del SessionAgent (sobrescribiendo de forma segura bibliotecas de runtime idénticas)
-Copy-Item -Path "$TempSessionDir\*" -Destination $PublishDir -Recurse -Force
+    foreach ($srcDir in $SourceDirs) {
+        if (-not (Test-Path $srcDir)) { continue }
+        Get-ChildItem -Path $srcDir -Recurse | ForEach-Object {
+            $relPath = [System.IO.Path]::GetRelativePath($srcDir, $_.FullName)
+            $destPath = Join-Path $TargetDir $relPath
+
+            if ($_.PSIsContainer) {
+                if (-not (Test-Path $destPath)) {
+                    New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+                }
+            } else {
+                if (-not (Test-Path $destPath)) {
+                    Copy-Item -Path $_.FullName -Destination $destPath -Force
+                } else {
+                    $collisionCount++
+                    $srcInfo = Get-Item $_.FullName
+                    $destInfo = Get-Item $destPath
+
+                    # Comparar versión de ensamblado para DLLs / EXEs
+                    $srcVer = (Get-ItemProperty $_.FullName -ErrorAction SilentlyContinue).VersionInfo.FileVersion
+                    $destVer = (Get-ItemProperty $destPath -ErrorAction SilentlyContinue).VersionInfo.FileVersion
+
+                    if ($srcVer -and $destVer -and ($srcVer -gt $destVer)) {
+                        Copy-Item -Path $_.FullName -Destination $destPath -Force
+                        Write-Host "    [Colisión Resuelta] $relPath actualizado a versión mayor ($srcVer > $destVer)" -ForegroundColor DarkGray
+                    } elseif ($srcInfo.LastWriteTimeUtc -gt $destInfo.LastWriteTimeUtc -and -not ($srcVer -and $destVer)) {
+                        Copy-Item -Path $_.FullName -Destination $destPath -Force
+                        Write-Host "    [Colisión Resuelta] $relPath actualizado por marca de tiempo más reciente" -ForegroundColor DarkGray
+                    } else {
+                        # Mantener el existente (versión mayor o idéntica)
+                    }
+                }
+            }
+        }
+    }
+    return $collisionCount
+}
+
+$collisionsResolved = Merge-PublishedDirectories -SourceDirs @($TempServiceDir, $TempSessionDir) -TargetDir $PublishDir
+Write-Host "  ✓ Ensamblado completado ($collisionsResolved colisiones de runtime resueltas con preservación de versión mayor)." -ForegroundColor Green
 
 # Limpiar staging temporal
 Remove-Item -Recurse -Force $TempBase
 
-# Confirmar presencia final de ambos binarios en PublishDir
+# Confirmar presencia final de ambos binarios y componentes clave en PublishDir
 $FinalServiceExe = Join-Path $PublishDir "AssetSchool.Student.Service.exe"
 $FinalSessionExe = Join-Path $PublishDir "AssetSchool.Student.SessionAgent.exe"
 
 if (-not (Test-Path $FinalServiceExe) -or -not (Test-Path $FinalSessionExe)) {
     throw "ERROR CRÍTICO: Fallo al ensamblar los ejecutables en $PublishDir."
 }
-Write-Host "  ✓ Ensamblado completado con éxito en $PublishDir." -ForegroundColor Green
+
+# Auditar presencia de componentes esenciales de runtime .NET 8 autocontenido
+$CriticalRuntimeFiles = @("coreclr.dll", "hostfxr.dll", "hostpolicy.dll", "icudt.dat")
+foreach ($crf in $CriticalRuntimeFiles) {
+    $crfPath = Join-Path $PublishDir $crf
+    if (Test-Path $crfPath) {
+        Write-Host "  ✓ Componente runtime preservado: $crf" -ForegroundColor DarkGray
+    } else {
+        Write-Warning "Componente runtime no encontrado en la raíz de publicación: $crf (verifique si fue empaquetado como SingleFile)."
+    }
+}
+
+$totalPublishedFiles = (Get-ChildItem -Path $PublishDir -Recurse -File).Count
+Write-Host "  ✓ Total de archivos ensamblados en $PublishDir: $totalPublishedFiles archivos." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 5. GENERACIÓN DEL PAQUETE MSI (WIX TOOLSET)
@@ -220,28 +277,28 @@ if (-not $wixBuilt) {
 }
 
 # -----------------------------------------------------------------------------
-# 6. GENERACIÓN DEL PAQUETE ZIP DE VALIDACIÓN CON BINARIOS REALES
+# 6. GENERACIÓN DEL PAQUETE ZIP DE VALIDACIÓN CON DISTRIBUCIÓN COMPLETA
 # -----------------------------------------------------------------------------
-Write-Host "`n[5/5] Generando paquete ZIP de validación con binarios y scripts..." -ForegroundColor Yellow
+Write-Host "`n[5/5] Generando paquete ZIP de validación con distribución completa..." -ForegroundColor Yellow
 
 $ZipStaging = "$OutputPath\_zip_staging"
 if (Test-Path $ZipStaging) { Remove-Item -Recurse -Force $ZipStaging }
 New-Item -ItemType Directory -Path "$ZipStaging\bin" -Force | Out-Null
 
-# Copiar scripts de instalación
+# Copiar scripts de instalación a la raíz del paquete
 $SetupFiles = @(
     "AssetSchool-Student-Setup.cmd",
     "install-student.ps1",
     "uninstall-student.ps1",
     "AssetSchool.Student.wxs",
     "student-config.sample.json",
-    "README_INSTALACION_WINDOWS11.txt"
+    "README_INSTALACION_WINDOWS11.txt",
+    "build-msi.ps1"
 )
 
 foreach ($sf in $SetupFiles) {
     $sfPath = Join-Path $OutputPath $sf
     if (-not (Test-Path $sfPath)) {
-        # Buscar en carpeta student
         $sfPath = Join-Path $PSScriptRoot $sf
     }
     if (Test-Path $sfPath) {
@@ -252,8 +309,10 @@ foreach ($sf in $SetupFiles) {
     }
 }
 
-# Copiar binarios y dependencias al subdirectorio 'bin\' y ejecutables a la raíz
+# Copiar la totalidad de binarios, DLLs nativas, .dat, configs y subcarpetas al directorio 'bin\'
 Copy-Item -Path "$PublishDir\*" -Destination "$ZipStaging\bin\" -Recurse -Force
+
+# Colocar también los dos ejecutables en la raíz para máxima compatibilidad
 Copy-Item -Path $FinalServiceExe -Destination $ZipStaging -Force
 Copy-Item -Path $FinalSessionExe -Destination $ZipStaging -Force
 
@@ -269,9 +328,9 @@ $zipHash = (Get-FileHash -Path $ZipOutputFile -Algorithm SHA256).Hash
 
 Write-Host "`n======================================================================" -ForegroundColor Green
 Write-Host "   COMPILACIÓN Y EMPAQUETADO COMPLETADOS EXITOSAMENTE                " -ForegroundColor Green
-Write-Host "   Directorio Binarios: $PublishDir" -ForegroundColor Green
-Write-Host "   Service Exe:         AssetSchool.Student.Service.exe (SHA: $($hashService.Substring(0,16))...)" -ForegroundColor Green
-Write-Host "   SessionAgent Exe:    AssetSchool.Student.SessionAgent.exe (SHA: $($hashSession.Substring(0,16))...)" -ForegroundColor Green
-Write-Host "   Paquete ZIP:         $ZipOutputFile ($([math]::Round($zipInfo.Length / 1MB, 2)) MB)" -ForegroundColor Green
-Write-Host "   SHA-256 ZIP:         $zipHash" -ForegroundColor Green
+Write-Host "   Directorio Publicación: $PublishDir ($totalPublishedFiles archivos)" -ForegroundColor Green
+Write-Host "   Service Exe:            AssetSchool.Student.Service.exe (SHA: $($hashService.Substring(0,16))...)" -ForegroundColor Green
+Write-Host "   SessionAgent Exe:       AssetSchool.Student.SessionAgent.exe (SHA: $($hashSession.Substring(0,16))...)" -ForegroundColor Green
+Write-Host "   Paquete ZIP:            $ZipOutputFile ($([math]::Round($zipInfo.Length / 1MB, 2)) MB)" -ForegroundColor Green
+Write-Host "   SHA-256 ZIP:            $zipHash" -ForegroundColor Green
 Write-Host "======================================================================" -ForegroundColor Green

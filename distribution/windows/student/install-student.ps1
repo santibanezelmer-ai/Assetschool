@@ -69,47 +69,47 @@ if ($osBuild -ge 22000) {
 }
 
 # -----------------------------------------------------------------------------
-# 2. VALIDACIÓN ESTRICTA DE BINARIOS PE x64 (REQUISITO CRÍTICO DE SEGURIDAD)
+# 2. LOCALIZACIÓN Y VALIDACIÓN ESTRICTA DE BINARIOS PE x64
 # -----------------------------------------------------------------------------
-Write-Host "`n[2/7] Validando integridad y arquitectura de ejecutables (PE x64)..." -ForegroundColor Yellow
+Write-Host "`n[2/7] Localizando y validando ejecutables (PE x64)..." -ForegroundColor Yellow
 
 function Test-ValidPeX64Binary {
     param([string]$FilePath)
     if (-not (Test-Path $FilePath)) { return @{ Valid = $false; Reason = "Archivo no encontrado" } }
     try {
+        $fileInfo = Get-Item $FilePath
+        if ($fileInfo.Length -lt 102400) { # Ejecutable .NET win-x64 autocontenido mínimo > 100 KB
+            return @{ Valid = $false; Reason = "Tamaño sospechoso o insuficiente ($($fileInfo.Length) bytes)" }
+        }
         $stream = [System.IO.File]::OpenRead($FilePath)
         $reader = New-Object System.IO.BinaryReader($stream)
-        if ($stream.Length -lt 256) {
-            $stream.Close()
-            return @{ Valid = $false; Reason = "Tamaño de archivo insuficiente para cabecera PE" }
-        }
-        # Verificar firma DOS 'MZ' (0x5A4D)
+
+        # 1. Verificar firma DOS 'MZ' (0x5A4D)
         $dosMagic = $reader.ReadUInt16()
         if ($dosMagic -ne 0x5A4D) {
             $stream.Close()
             return @{ Valid = $false; Reason = "No es un ejecutable válido (cabecera DOS MZ ausente)" }
         }
-        # Leer offset de cabecera PE (offset 0x3C en cabecera DOS)
+        # 2. Leer offset de cabecera PE (offset 0x3C en cabecera DOS)
         $stream.Seek(0x3C, [System.IO.SeekOrigin]::Begin) | Out-Null
         $peOffset = $reader.ReadInt32()
         if ($peOffset -lt 0 -or $peOffset -gt ($stream.Length - 24)) {
             $stream.Close()
             return @{ Valid = $false; Reason = "Offset de cabecera PE inválido o corrupto" }
         }
-        # Verificar firma PE 'PE\0\0' (0x00004550)
+        # 3. Verificar firma PE 'PE\0\0' (0x00004550)
         $stream.Seek($peOffset, [System.IO.SeekOrigin]::Begin) | Out-Null
         $peSig = $reader.ReadUInt32()
         if ($peSig -ne 0x00004550) {
             $stream.Close()
             return @{ Valid = $false; Reason = "Firma PE inválida" }
         }
-        # Leer arquitectura Machine en COFF header
+        # 4. Leer arquitectura Machine en COFF header (0x8664 = IMAGE_FILE_MACHINE_AMD64)
         $machine = $reader.ReadUInt16()
         $stream.Close()
 
-        # 0x8664 = IMAGE_FILE_MACHINE_AMD64 (x64)
         if ($machine -eq 0x8664) {
-            return @{ Valid = $true; Machine = "x64 (AMD64)" }
+            return @{ Valid = $true; Machine = "x64 (AMD64)"; SizeBytes = $fileInfo.Length }
         } else {
             return @{ Valid = $false; Reason = "Arquitectura de binario incompatible ($([Convert]::ToString($machine, 16))). Se requiere x64 (0x8664)." }
         }
@@ -118,62 +118,88 @@ function Test-ValidPeX64Binary {
     }
 }
 
-$SourcePublishDir = "$PSScriptRoot\..\..\..\dist\bin\student-windows"
 $RequiredBinaries = @("AssetSchool.Student.Service.exe", "AssetSchool.Student.SessionAgent.exe")
+
+# Candidatos a directorio contenedor de binarios (orden de prioridad):
+$CandidateBinaryDirs = @(
+    (Join-Path $PSScriptRoot "bin"),                                                                 # Subdirectorio bin en paquete ZIP
+    $PSScriptRoot,                                                                                  # Mismo directorio del script
+    (Resolve-Path "$PSScriptRoot\..\..\..\dist\bin\student-windows" -ErrorAction SilentlyContinue),  # Árbol del repositorio
+    $InstallDir                                                                                     # Directorio destino preexistente
+) | Where-Object { $_ -and (Test-Path $_) }
+
+$BinarySourceDir = $null
+foreach ($cDir in $CandidateBinaryDirs) {
+    $hasService = Test-Path (Join-Path $cDir "AssetSchool.Student.Service.exe")
+    $hasSession = Test-Path (Join-Path $cDir "AssetSchool.Student.SessionAgent.exe")
+    if ($hasService -and $hasSession) {
+        $BinarySourceDir = $cDir
+        break
+    }
+}
+
+if (-not $BinarySourceDir) {
+    throw "INSTALACIÓN ABORTADA POR SEGURIDAD: No se encontró ningún directorio fuente que contenga ambos ejecutables requeridos (AssetSchool.Student.Service.exe y AssetSchool.Student.SessionAgent.exe). Rutas examinadas: $($CandidateBinaryDirs -join '; ')"
+}
+
+Write-Host "  ✓ Directorio fuente de distribución localizado: $BinarySourceDir" -ForegroundColor Green
+
+# Validar ambos ejecutables en el directorio fuente
 $ResolvedBinaries = @{}
-
 foreach ($binName in $RequiredBinaries) {
-    $candidatePaths = @(
-        (Join-Path $InstallDir $binName),
-        (Join-Path $PSScriptRoot $binName),
-        (Join-Path $PSScriptRoot "bin\$binName"),
-        (Join-Path $SourcePublishDir $binName)
-    )
-    $foundPath = $candidatePaths | Where-Object { Test-Path $_ } | Select-Object -First 1
-
-    if (-not $foundPath) {
-        throw "INSTALACIÓN ABORTADA POR SEGURIDAD: Falta el componente crítico '$binName'. No se puede continuar sin el ejecutable verificado."
-    }
-
-    $peCheck = Test-ValidPeX64Binary -FilePath $foundPath
+    $binPath = Join-Path $BinarySourceDir $binName
+    $peCheck = Test-ValidPeX64Binary -FilePath $binPath
     if (-not $peCheck.Valid) {
-        throw "INSTALACIÓN ABORTADA POR SEGURIDAD: El binario '$foundPath' no es un ejecutable PE x64 válido. Motivo: $($peCheck.Reason)"
+        throw "INSTALACIÓN ABORTADA POR SEGURIDAD: El binario '$binPath' no es un ejecutable PE x64 válido. Motivo: $($peCheck.Reason)"
     }
-
-    $hash = (Get-FileHash -Path $foundPath -Algorithm SHA256).Hash
-    Write-Host "  ✓ $binName verificado: formato PE $($peCheck.Machine), SHA-256: $($hash.Substring(0,16))..." -ForegroundColor Green
-    $ResolvedBinaries[$binName] = $foundPath
+    $hash = (Get-FileHash -Path $binPath -Algorithm SHA256).Hash
+    Write-Host "  ✓ $binName verificado: formato PE $($peCheck.Machine) [$($peCheck.SizeBytes) bytes], SHA-256: $($hash.Substring(0,16))..." -ForegroundColor Green
+    $ResolvedBinaries[$binName] = $binPath
 }
 
 # -----------------------------------------------------------------------------
-# 3. PREPARACIÓN DE DIRECTORIOS Y COPIA DE ARCHIVOS VERIFICADOS
+# 3. PREPARACIÓN DE DIRECTORIOS Y COPIA DE LA DISTRIBUCIÓN COMPLETA
 # -----------------------------------------------------------------------------
-Write-Host "`n[3/7] Desplegando binarios verificados y dependencias en $InstallDir..." -ForegroundColor Yellow
+Write-Host "`n[3/7] Desplegando distribución completa en $InstallDir..." -ForegroundColor Yellow
 if (-not (Test-Path $InstallDir)) { New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null }
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
 if (-not (Test-Path "$DataDir\logs")) { New-Item -ItemType Directory -Path "$DataDir\logs" -Force | Out-Null }
 
-# Copiar dependencias de runtime (.dll, .json runtimeconfig, .pdb) desde los directorios de origen
-$sourceDirs = $ResolvedBinaries.Values | ForEach-Object { Split-Path -Parent $_ } | Select-Object -Unique
-foreach ($sDir in $sourceDirs) {
-    if ($sDir -ne $InstallDir -and (Test-Path $sDir)) {
-        Get-ChildItem -Path $sDir -File | Where-Object { $_.Extension -in @(".dll", ".json", ".pdb", ".node") -and $_.Name -ne "student-config.json" } | ForEach-Object {
-            $destFile = Join-Path $InstallDir $_.Name
-            Copy-Item -Path $_.FullName -Destination $destFile -Force
+# Si el directorio fuente es distinto al de instalación, copiar TODOS los archivos y subcarpetas sin filtrar extensiones
+if ((Resolve-Path $BinarySourceDir).Path -ne (Resolve-Path $InstallDir).Path) {
+    Write-Host "  -> Copiando todos los archivos desde $BinarySourceDir hacia $InstallDir (sin filtros de extensión)..." -ForegroundColor DarkGray
+    
+    Get-ChildItem -Path $BinarySourceDir -Recurse | ForEach-Object {
+        $relPath = [System.IO.Path]::GetRelativePath($BinarySourceDir, $_.FullName)
+        $destPath = Join-Path $InstallDir $relPath
+
+        if ($_.PSIsContainer) {
+            if (-not (Test-Path $destPath)) {
+                New-Item -ItemType Directory -Path $destPath -Force | Out-Null
+            }
+        } else {
+            # Evitar sobreescribir student-config.json si existiera en la fuente
+            if ($_.Name -ne "student-config.json") {
+                Copy-Item -Path $_.FullName -Destination $destPath -Force
+            }
         }
     }
 }
 
+# Verificación de integridad post-copia en InstallDir:
 foreach ($binName in $RequiredBinaries) {
-    $src = $ResolvedBinaries[$binName]
-    $dest = Join-Path $InstallDir $binName
-    if ($src -ne $dest) {
-        Copy-Item -Path $src -Destination $dest -Force
-        Write-Host "  ✓ Copiado: $binName -> $dest" -ForegroundColor Green
-    } else {
-        Write-Host "  ✓ Presente: $binName en $dest" -ForegroundColor Green
+    $installedBin = Join-Path $InstallDir $binName
+    if (-not (Test-Path $installedBin)) {
+        throw "ERROR CRÍTICO: Fallo al desplegar $binName en $InstallDir."
+    }
+    $reCheck = Test-ValidPeX64Binary -FilePath $installedBin
+    if (-not $reCheck.Valid) {
+        throw "ERROR CRÍTICO: El binario desplegado en '$installedBin' quedó corrupto tras la copia."
     }
 }
+
+$deployedFilesCount = (Get-ChildItem -Path $InstallDir -Recurse -File).Count
+Write-Host "  ✓ Distribución completa desplegada en $InstallDir ($deployedFilesCount archivos preservados, incluyendo .dll, .dat, .json y dependencias nativas)." -ForegroundColor Green
 
 # -----------------------------------------------------------------------------
 # 4. PROTECCIÓN NTFS ESTRICTA DE CONFIGURACIÓN Y SECRETOS
