@@ -106,13 +106,12 @@
       </Component>
     </ComponentGroup>
 
-    <!-- Component Group: Configuration Data in ProgramData -->
+    <!-- Component Group: Configuration Data in ProgramData (Strict NTFS: SYSTEM and Admins only) -->
     <ComponentGroup Id="ConfigComponents" Directory="DATAFOLDER">
       <Component Id="cmp_ConfigDir" Guid="7E57C005-57D1-4E88-B391-7C65F8E21005" Permanent="yes" NeverOverwrite="yes">
         <CreateFolder>
           <Permission User="Administrators" GenericAll="yes" />
           <Permission User="SYSTEM" GenericAll="yes" />
-          <Permission User="Users" GenericRead="yes" GenericExecute="yes" />
         </CreateFolder>
         <RegistryValue Root="HKLM" 
                        Key="Software\AssetSchool\Student" 
@@ -132,14 +131,14 @@
     <!-- Custom Actions: Pass Properties to Config File on Silent Deployment & Configure Private Firewall -->
     <CustomAction Id="WriteConfigOnInstall" 
                   Directory="INSTALLFOLDER" 
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$url = if ('[SERVER_URL]' -ne '') { '[SERVER_URL]' } else { 'http://[SERVER_HOST]:[SERVER_PORT]' }; $cfg = @{ serverUrl=$url; serverHost='[SERVER_HOST]'; serverPort=[int]'[SERVER_PORT]'; autoDiscovery=$true; institutionId='[INSTITUTION_ID]'; classroomId='[CLASSROOM_ID]'; enrollmentToken='[ENROLLMENT_TOKEN]' } | ConvertTo-Json; [IO.File]::WriteAllText('[DATAFOLDER]student-config.json', $cfg)&quot;" 
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;$url = if ('[SERVER_URL]' -ne '') { '[SERVER_URL]' } else { 'http://[SERVER_HOST]:[SERVER_PORT]' }; $cfg = @{ serverUrl=$url; serverHost='[SERVER_HOST]'; serverPort=[int]'[SERVER_PORT]'; autoDiscovery=$true; institutionId='[INSTITUTION_ID]'; classroomId='[CLASSROOM_ID]'; enrollmentToken='[ENROLLMENT_TOKEN]' } | ConvertTo-Json; [IO.File]::WriteAllText('[DATAFOLDER]student-config.json', $cfg); $acl = New-Object Security.AccessControl.FileSecurity; $acl.SetAccessRuleProtection($true, $false); $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule('SYSTEM','FullControl','Allow'))); $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule('Administrators','FullControl','Allow'))); Set-Acl '[DATAFOLDER]student-config.json' $acl&quot;" 
                   Execute="deferred" 
                   Return="ignore" 
                   Impersonate="no" />
 
     <CustomAction Id="ConfigureFirewallOnInstall"
                   Directory="INSTALLFOLDER"
-                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall add rule name='AssetSchool Student UDP Discovery' dir=in action=allow protocol=UDP localport=48500 profile=private enable=yes; netsh advfirewall firewall add rule name='AssetSchool Student SFU WebRTC' dir=in action=allow protocol=UDP localport=40000-40999 profile=private enable=yes; netsh advfirewall firewall add rule name='AssetSchool Student Outbound Signaling' dir=out action=allow protocol=TCP remoteport=[SERVER_PORT] profile=private enable=yes&quot;"
+                  ExeCommand="powershell.exe -NoProfile -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall add rule name='AssetSchool Student UDP Discovery' dir=in action=allow protocol=UDP localport=48500 profile=private remoteip=localsubnet enable=yes; netsh advfirewall firewall add rule name='AssetSchool Student Outbound Signaling' dir=out action=allow protocol=TCP remoteport=[SERVER_PORT] profile=private enable=yes&quot;"
                   Execute="deferred"
                   Return="ignore"
                   Impersonate="no" />

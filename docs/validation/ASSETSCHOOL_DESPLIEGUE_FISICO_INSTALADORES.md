@@ -1,5 +1,5 @@
 # ASSETSCHOOL — INFORME DE DESPLIEGUE FÍSICO MEDIANTE INSTALADORES
-## Fase K.2 — Validación Distribuida Multiplataforma (MacBook macOS ↔ PC Windows 11)
+## Fase K.2 / K.2.1 — Validación Distribuida Multiplataforma y Correcciones de Seguridad del Instalador Windows (MacBook macOS ↔ PC Windows 11)
 
 > **Fecha de Emisión:** 18 de Noviembre de 2026  
 > **Repositorio:** `~/Documents/Proyectos/AssetSchool`  
@@ -115,22 +115,49 @@ En cumplimiento de la instrucción 5 y 6:
   2. Archivo `C:\ProgramData\AssetSchool\Student\student-config.json` (`serverHost`, `serverPort`, `serverUrl`).
 - Si existe configuración manual fija, el servicio se conecta de forma inmediata al servidor designado y mantiene la baliza UDP en modo diagnóstico sin sobreescribir la IP docente fija.
 
-### 4.3 Puertos de Red y Seguridad de Firewall (Instrucciones 7, 8 y 9)
-- **Puertos Utilizados:**
-  - `TCP 3000`: API REST HTTP y señalización WebSocket Socket.IO (bidireccional interna).
-  - `UDP 48500`: Descubrimiento LAN por balizas broadcast locales.
-  - `UDP 40000-40999`: Transporte multimedia WebRTC RTP/RTCP para Mediasoup SFU v3.
-- **Reglas de Firewall:** Todas las excepciones configuradas mediante `netsh advfirewall` están restringidas estrictamente al perfil de red **Privado** (`profile=private`).
+### 4.3 Puertos de Red y Seguridad de Firewall (Auditoría de Tráfico Real)
+En la Fase K.2.1 se auditó estrictamente el sentido real del tráfico entre el PC Windows 11 (Student) y el MacBook macOS (Server):
+- **Tráfico Entrante en Windows Student:**
+  - El agente Windows es un cliente; **no actúa como servidor HTTP ni como SFU WebRTC**.
+  - **Se eliminaron reglas entrantes innecesarias:** los puertos UDP 40000-40999 (Mediasoup SFU) son de escucha en el servidor Mac, no en el cliente Windows (WebRTC opera con NAT/firewall stateful de salida). No se abren puertos entrantes 40000-40999 ni TCP 3000 en el PC Windows.
+  - **Única regla entrante requerida:** Baliza de descubrimiento UDP `48500`, acotada exclusivamente a perfil **Privado** y a la subred local (`localsubnet`). Si se configura IP manual fija y se deshabilita autodescubrimiento, ni siquiera este puerto se abre.
+- **Tráfico Saliente en Windows Student:**
+  - Señalización WebSocket Socket.IO hacia TCP `3000` (o `443` si TLS está activo) en el servidor Mac.
+  - Regla saliente restringida al perfil **Privado** y a la dirección IP específica del servidor Mac (`RemoteAddress: 192.168.4.42`).
 - **Seguridad Perimetral:**
   - **No se abren puertos hacia Internet ni se configura Port Forwarding / UPnP.**
-  - Las balizas y conexiones están restringidas a rangos RFC 1918 (`192.168.0.0/16`, `10.0.0.0/8`).
-  - Todas las peticiones externas o de perfiles Públicos son bloqueadas por el firewall nativo.
+  - Reglas acotadas estrictamente a perfiles de red privada del laboratorio escolar.
 
-### 4.4 Integridad de Windows Defender (Instrucción 11)
+### 4.4 Integridad de Windows Defender
 El instalador:
 - **NO desactiva la protección en tiempo real de Windows Defender** (`DisableRealtimeMonitoring = false`).
 - **NO agrega exclusiones a nivel de raíz del disco ni rutas arbitrarias.**
 - Verifica la presencia y estado del antivirus de Windows mediante `Get-MpPreference`.
+
+### 4.5 Validación Rigurosa de Binarios PE x64 (Anti-Corrupción)
+Para evitar registrar o arrancar servicios incompletos o corruptos:
+- La función `Test-ValidPeX64Binary` en `install-student.ps1` inspecciona los encabezados binarios:
+  1. Firma DOS `MZ` (`0x5A4D`) en el offset 0.
+  2. Firma PE `PE\0\0` (`0x00004550`) referenciada por `e_lfanew` en offset `0x3C`.
+  3. Arquitectura del procesador COFF: debe ser estrictamente `0x8664` (`IMAGE_FILE_MACHINE_AMD64`).
+- Si falta `AssetSchool.Student.Service.exe` o `AssetSchool.Student.SessionAgent.exe`, o si alguno no es un binario PE x64 válido, **la instalación se aborta inmediatamente sin registrar ni iniciar el servicio en el SCM**.
+
+### 4.6 Protección NTFS de Configuración Institucional
+- El archivo `C:\ProgramData\AssetSchool\Student\student-config.json` almacena el token institucional de enrolamiento y la configuración del aula.
+- **Permisos NTFS Estrictos Aplicados:**
+  - Se deshabilita la herencia de permisos (`SetAccessRuleProtection($true, $false)`).
+  - Acceso concedido únicamente a:
+    * `SYSTEM` (FullControl) — Requerido por el servicio Windows en Sesión 0.
+    * `Administrators` (FullControl).
+  - **Usuarios estándar (alumnos) bloqueados:** Ningún estudiante autenticado en la sesión interactiva puede leer `student-config.json`, previniendo la exfiltración de tokens institucionales. El `SessionAgent` se comunica con el servicio exclusivamente vía Named Pipes securizados (`AssetSchool_IPC_S*`).
+
+### 4.7 Requisitos Reales de Compatibilidad con Windows 11
+- **Ediciones Soportadas:** Windows 11 Pro, Education y Enterprise (64 bits). *Windows 11 Home* no se recomienda para aulas gestionadas debido a la falta de políticas de grupo (GPO) y gestión de dominio.
+- **Versión de Sistema Operativo:** Windows 11 versión 22H2 (Build 22621) o superior recomendada para soporte nativo de `Windows.Graphics.Capture` sin bordes visuales amarillos. Compatible con Windows 10 x64 Build 19044+.
+- **Runtimes y Hardware:**
+  - Arquitectura x64 (AMD64) obligatoria.
+  - Microsoft .NET 8.0 Desktop Runtime x64 (si no se utiliza publicación autocontenida).
+  - Tarjeta gráfica con soporte DirectX 11 / WDDM 2.0+.
 
 ---
 

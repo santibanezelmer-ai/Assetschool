@@ -40,8 +40,11 @@ Write-Host "  ✓ Clave de registro removida." -ForegroundColor Green
 # 3. Eliminar reglas de firewall
 Write-Host "[3/4] Eliminando reglas de Windows Firewall..." -ForegroundColor Yellow
 netsh.exe advfirewall firewall delete rule name="AssetSchool Student (UDP Discovery)" | Out-Null
+netsh.exe advfirewall firewall delete rule name="AssetSchool Student UDP Discovery" | Out-Null
 netsh.exe advfirewall firewall delete rule name="AssetSchool Student (Mediasoup SFU WebRTC)" | Out-Null
+netsh.exe advfirewall firewall delete rule name="AssetSchool Student SFU WebRTC" | Out-Null
 netsh.exe advfirewall firewall delete rule name="AssetSchool Student (Signaling Outbound)" | Out-Null
+netsh.exe advfirewall firewall delete rule name="AssetSchool Student Outbound Signaling" | Out-Null
 netsh.exe advfirewall firewall delete rule name="AssetSchool Student Service Program" | Out-Null
 Write-Host "  ✓ Reglas de firewall eliminadas." -ForegroundColor Green
 

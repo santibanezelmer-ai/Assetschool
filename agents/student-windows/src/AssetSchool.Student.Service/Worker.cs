@@ -21,6 +21,7 @@ public class Worker : BackgroundService
     private ClientWebSocket? _webSocket;
     private string _serverHost = "127.0.0.1";
     private int _serverPort = 3000;
+    private string _serverUrl = "";
     private bool _isManualHostConfigured = false;
     private string _institutionId = "";
     private string _classroomId = "";
@@ -42,6 +43,7 @@ public class Worker : BackgroundService
 
         if (!string.IsNullOrWhiteSpace(envUrl) && Uri.TryCreate(envUrl, UriKind.Absolute, out var parsedUri))
         {
+            _serverUrl = envUrl.Trim();
             _serverHost = parsedUri.Host;
             _serverPort = parsedUri.Port;
             _isManualHostConfigured = true;
@@ -70,8 +72,10 @@ public class Worker : BackgroundService
 
                 if (root.TryGetProperty("serverUrl", out var urlProp) && !string.IsNullOrWhiteSpace(urlProp.GetString()))
                 {
-                    if (Uri.TryCreate(urlProp.GetString(), UriKind.Absolute, out var u))
+                    string rawUrl = urlProp.GetString()!;
+                    if (Uri.TryCreate(rawUrl, UriKind.Absolute, out var u))
                     {
+                        _serverUrl = rawUrl;
                         _serverHost = u.Host;
                         _serverPort = u.Port;
                         _isManualHostConfigured = true;
@@ -200,9 +204,19 @@ public class Worker : BackgroundService
     private async Task ConnectAndRunGatewayAsync(CancellationToken token)
     {
         _webSocket = new ClientWebSocket();
-        var uri = new Uri($"ws://{_serverHost}:{_serverPort}/socket.io/?EIO=4&transport=websocket");
+        string scheme = "ws";
+        if (!string.IsNullOrEmpty(_serverUrl) && (_serverUrl.StartsWith("https://", StringComparison.OrdinalIgnoreCase) || _serverUrl.StartsWith("wss://", StringComparison.OrdinalIgnoreCase)))
+        {
+            scheme = "wss";
+        }
+        else if (_serverPort == 443)
+        {
+            scheme = "wss";
+        }
 
-        _logger.LogInformation($"Conectando al servidor central: {uri}");
+        var uri = new Uri($"{scheme}://{_serverHost}:{_serverPort}/socket.io/?EIO=4&transport=websocket");
+
+        _logger.LogInformation($"Conectando al servidor central: {uri} (Cifrado: {(scheme == "wss" ? "TLS/WSS Activo" : "WS Plano (Solo LAN Privada)")})");
         await _webSocket.ConnectAsync(uri, token);
 
         _isConnected = true;
