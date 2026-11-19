@@ -21,12 +21,87 @@ public class Worker : BackgroundService
     private ClientWebSocket? _webSocket;
     private string _serverHost = "127.0.0.1";
     private int _serverPort = 3000;
+    private bool _isManualHostConfigured = false;
+    private string _institutionId = "";
+    private string _classroomId = "";
+    private string _enrollmentToken = "";
     private bool _isConnected;
     private string _deviceId = $"win-{Environment.MachineName.ToLowerInvariant()}";
 
     public Worker(ILogger<Worker> logger)
     {
         _logger = logger;
+    }
+
+    private void LoadConfiguration()
+    {
+        // 1. Check environment variables
+        var envHost = Environment.GetEnvironmentVariable("ASSETSCHOOL_SERVER_HOST");
+        var envPort = Environment.GetEnvironmentVariable("ASSETSCHOOL_SERVER_PORT");
+        var envUrl = Environment.GetEnvironmentVariable("ASSETSCHOOL_SERVER_URL");
+
+        if (!string.IsNullOrWhiteSpace(envUrl) && Uri.TryCreate(envUrl, UriKind.Absolute, out var parsedUri))
+        {
+            _serverHost = parsedUri.Host;
+            _serverPort = parsedUri.Port;
+            _isManualHostConfigured = true;
+            _logger.LogInformation($"[Config] Servidor manual configurado vía ASSETSCHOOL_SERVER_URL: {_serverHost}:{_serverPort}");
+        }
+        else if (!string.IsNullOrWhiteSpace(envHost))
+        {
+            _serverHost = envHost.Trim();
+            if (int.TryParse(envPort, out var p)) _serverPort = p;
+            _isManualHostConfigured = true;
+            _logger.LogInformation($"[Config] Servidor manual configurado vía variables de entorno: {_serverHost}:{_serverPort}");
+        }
+
+        // 2. Check configuration file in ProgramData or Application BaseDirectory
+        string programDataPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "AssetSchool", "Student", "student-config.json");
+        string localPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "student-config.json");
+        string configPath = File.Exists(programDataPath) ? programDataPath : (File.Exists(localPath) ? localPath : "");
+
+        if (!string.IsNullOrEmpty(configPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(configPath);
+                using var doc = JsonDocument.Parse(json);
+                var root = doc.RootElement;
+
+                if (root.TryGetProperty("serverUrl", out var urlProp) && !string.IsNullOrWhiteSpace(urlProp.GetString()))
+                {
+                    if (Uri.TryCreate(urlProp.GetString(), UriKind.Absolute, out var u))
+                    {
+                        _serverHost = u.Host;
+                        _serverPort = u.Port;
+                        _isManualHostConfigured = true;
+                    }
+                }
+                else if (root.TryGetProperty("serverHost", out var hostProp) && !string.IsNullOrWhiteSpace(hostProp.GetString()))
+                {
+                    _serverHost = hostProp.GetString()!;
+                    if (root.TryGetProperty("serverPort", out var portProp) && portProp.TryGetInt32(out var pt))
+                    {
+                        _serverPort = pt;
+                    }
+                    _isManualHostConfigured = true;
+                }
+
+                if (root.TryGetProperty("institutionId", out var instProp)) _institutionId = instProp.GetString() ?? "";
+                if (root.TryGetProperty("classroomId", out var roomProp)) _classroomId = roomProp.GetString() ?? "";
+                if (root.TryGetProperty("enrollmentToken", out var tokProp)) _enrollmentToken = tokProp.GetString() ?? "";
+
+                _logger.LogInformation($"[Config] Archivo cargado desde {configPath} (Servidor: {_serverHost}:{_serverPort}, Manual: {_isManualHostConfigured})");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning($"[Config] No se pudo leer {configPath}: {ex.Message}");
+            }
+        }
+        else
+        {
+            _logger.LogInformation($"[Config] No se encontró student-config.json. Modo descubrimiento UDP activo por defecto.");
+        }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -36,6 +111,9 @@ public class Worker : BackgroundService
         _logger.LogInformation($"  Equipo: {Environment.MachineName} (Sesión 0)");
         _logger.LogInformation($"  MAC: {GetActiveMacAddress()} | IP: {GetLocalIpAddress()}");
         _logger.LogInformation("=========================================================");
+
+        // Load configuration before starting connections
+        LoadConfiguration();
 
         // Multi-Session IPC Manager: handles dynamic sessions, fast user switching, and Session 0 isolation
         string currentDir = AppDomain.CurrentDomain.BaseDirectory;
@@ -98,9 +176,14 @@ public class Worker : BackgroundService
                         string host = hostProp.GetString() ?? "127.0.0.1";
                         int port = payload.TryGetProperty("wsPort", out var p) ? p.GetInt32() : 3000;
 
-                        if (_serverHost != host || _serverPort != port)
+                        if (_isManualHostConfigured)
                         {
-                            _logger.LogInformation($"[UDP Discovery] Profesor detectado en {host}:{port}");
+                            // Manual host has priority; log discovery for telemetry but do not overwrite
+                            _logger.LogDebug($"[UDP Discovery] Baliza recibida de {host}:{port}, omitida porque existe configuración manual fija ({_serverHost}:{_serverPort})");
+                        }
+                        else if (_serverHost != host || _serverPort != port)
+                        {
+                            _logger.LogInformation($"[UDP Discovery] Profesor detectado en {host}:{port}. Actualizando destino.");
                             _serverHost = host;
                             _serverPort = port;
                         }
@@ -184,7 +267,10 @@ public class Worker : BackgroundService
                 architecture = Environment.Is64BitOperatingSystem ? "x64" : "x86",
                 agentVersion = "1.0.0",
                 publicKey = "ed25519_win_key",
-                enrolledDeviceId = _deviceId
+                enrolledDeviceId = _deviceId,
+                institutionId = _institutionId,
+                classroomId = _classroomId,
+                enrollmentToken = _enrollmentToken
             };
 
             var envelope = new
@@ -292,7 +378,7 @@ public class Worker : BackgroundService
 
     public override void Dispose()
     {
-        _ipcServer?.Stop();
+        _sessionIpcManager?.Dispose();
         _webSocket?.Dispose();
         base.Dispose();
     }
