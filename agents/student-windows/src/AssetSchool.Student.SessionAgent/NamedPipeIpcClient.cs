@@ -155,8 +155,8 @@ public class NamedPipeIpcClient
 
                         if (cmdType == "LOCK_SCREEN")
                         {
-                            string msg = cmdParams.TryGetProperty("message", out var m) ? m.GetString() ?? "Pausa pedagógica" : "Pausa pedagógica";
-                            RunOnUIThread(() => LockCurtainForm.Instance.Show(msg));
+                            string cmdLockMsg = cmdParams.TryGetProperty("message", out var cmdMsgProp) ? cmdMsgProp.GetString() ?? "Pausa pedagógica" : "Pausa pedagógica";
+                            RunOnUIThread(() => LockCurtainForm.Instance.Show(cmdLockMsg));
                         }
                         else if (cmdType == "UNLOCK_SCREEN")
                         {

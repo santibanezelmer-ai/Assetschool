@@ -1,5 +1,6 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Windows.Forms;
 
 namespace AssetSchool.Student.SessionAgent.RemoteInput;
@@ -137,9 +138,6 @@ public static class InputInjector
         };
 
         SendInput(1, new[] { input }, Marshal.SizeOf(typeof(INPUT)));
-    }
-
-        SendInput(2, new[] { down, up }, Marshal.SizeOf(typeof(INPUT)));
     }
 
     public static void InjectKey(ushort keyCode, bool isKeyDown)

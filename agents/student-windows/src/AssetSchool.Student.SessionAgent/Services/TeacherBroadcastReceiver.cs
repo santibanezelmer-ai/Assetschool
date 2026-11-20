@@ -77,7 +77,7 @@ public class TeacherBroadcastReceiver : IDisposable
             }
         };
 
-        _peerConnection.OnVideoFrameReceived += (remoteEP, timestamp, payload) =>
+        _peerConnection.OnVideoFrameReceived += (remoteEP, timestamp, payload, format) =>
         {
             ProcessIncomingVideoRtp(payload);
         };
@@ -93,7 +93,7 @@ public class TeacherBroadcastReceiver : IDisposable
             waitMs += 50;
         }
 
-        string sdp = _peerConnection.localDescription?.sdp ?? offer.sdp;
+        string sdp = _peerConnection.localDescription?.sdp?.ToString() ?? offer.sdp;
         OnLog?.Invoke($"[WebRTC Student] Oferta SDP de suscripción generada ({sdp.Length} bytes).");
         return sdp;
     }
